@@ -1,5 +1,6 @@
 import ctypes
 from functools import lru_cache
+from pathlib import Path
 
 
 class XSI:
@@ -29,7 +30,10 @@ class XSI:
         self.xsi_lib = ctypes.cdll.LoadLibrary(xsim_design)
         self.init_func_definitions()
 
-        self.xsi_handle = self.open(xsim_dir="")
+        # Resolve absolute path to xsim.dir
+        xsim_dir = Path(xsim_design).resolve().parent.parent
+
+        self.xsi_handle = self.open(xsim_dir=str(xsim_dir))
 
         if tracefile is not None:
             self.xsi_lib.xsi_trace_all(self.xsi_handle)
