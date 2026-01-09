@@ -6,8 +6,7 @@ import shutil
 
 import cocotb
 from cocotb.triggers import Timer
-
-import cocotb_vivado.mock_triggers
+from cocotb.clock import Clock
 
 from cocotbext.axi import AxiLiteBus, AxiLiteMaster
 from cocotbext.axi import AxiStreamSink, AxiStreamSource, AxiStreamBus
@@ -23,12 +22,8 @@ async def reset(signal, timer):
 async def cocotb_fw_test(dut):
     AXIS_FIFO_BASEADDR = 0x1000
 
-    clk_period = 200
-    clk_timer = Timer(clk_period // 2, "ns")
-
-    cocotb_vivado.mock_triggers.set_timer(clk_timer)
-
-    cocotb.start_soon(cocotb_vivado.mock_triggers.clock(dut.aclk))
+    clk = Clock(dut.aclk, 200, units="ns")
+    cocotb.start_soon(clk.start())
 
     cocotb.start_soon(reset(dut.areset, Timer(520, "ns")))
 

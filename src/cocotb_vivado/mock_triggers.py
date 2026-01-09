@@ -8,7 +8,14 @@ shared timer, providing consistent timing behavior across the simulation.
 """
 
 import cocotb
+import warnings
 
+warnings.warn(
+    "mock_triggers is deprecated and will be removed in a future release; "
+    "use cocotb.clock.Clock() driver instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 class TimerSingleton:
     """Singleton class that provides a single reusable Timer(100, "ns") instance."""

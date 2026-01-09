@@ -10,7 +10,7 @@ Based on [cocotb-stub-sim](https://github.com/fvutils/cocotb-stub-sim).
 **Proof of Concept** – expect limitations (see below).  
 
 - Only top-level ports are accessible (simulator limitation).  
-- Only the `Timer` trigger is supported (simulator limitation).  
+- Edge-triggers `Edge`, `RisingEdge`, `FallingEdge` only work on clocks generated in the testbench/python with cocotb.clock.Clock() driver." (simulator limitation, see below).
 - Setting signal values is immediate (`setimmediatevalue` behavior).  
 - Only **Verilog top-levels** are supported (VHDL support planned).  
 - Direct access to the **XSI interface** is available.  
@@ -66,9 +66,17 @@ Extra feature: One does not need to recompile the project when running/changing 
 
 You can use `XSI` interface directly see `tests/test_xsi.py` for an example.
 
+## Overcoming `XSI` limitations
+
+`XSI` interface natively supports only `Timer` trigger.
+
+To allow for using edge triggers under this limitation, cocotb-vivado  provides its custom trigger mechanism. When `cocotb_vivado` is imported, a global ClockScheduler singleton is created. This scheduler replaces cocotb’s standard implementations of `Clock`, `Edge`, `RisingEdge`, and `FallingEdge`.
+
+The monkey‑patched Clock objects register themselves with the scheduler, which drives the associated signals and observes every resulting transition. On each clock‑driven edge, the scheduler evaluates all pending edge triggers and resumes any coroutines waiting on them. This polling‑on‑edge model gives deterministic behavior for multiple clocks while keeping the standard cocotb coroutine interface unchanged.
+
 ## cocotb extensions
 
-In order to use cocotb extension like [cocotbext-axi](https://github.com/alexforencich/cocotbext-axi)  one needs to mock the triggers (`XSI` limitations) by creating global clock timer and synchronizes all trigger events to it. See `tests/test_axil.py` for an example.
+In order to use cocotb extension like [cocotbext-axi](https://github.com/alexforencich/cocotbext-axi) one needs to use `Clock` driver for clocking their DUT.
 
 ## Full Vivado design simulation
 
