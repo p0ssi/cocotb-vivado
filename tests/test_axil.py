@@ -1,10 +1,8 @@
 import cocotb_vivado
-import subprocess
-import os
 import pathlib
-import shutil
 
 import cocotb
+from cocotb_vivado import get_runner
 from cocotb.triggers import Timer
 from cocotb.clock import Clock
 
@@ -39,15 +37,23 @@ async def cocotb_axil_test(dut):
 
 def test_axil():
     src_path = pathlib.Path(__file__).parent.absolute()
+    toplevel = "test_axil"
+    runner = get_runner("vivado")
+    waves = False
 
-    shutil.rmtree("xsim.dir", ignore_errors=True)
+    runner.build(
+        sources=[src_path / "test_axil.v"],
+        hdl_toplevel=toplevel,
+        waves=waves,
+        always=True  # always rebuild
+    )
 
-    if not os.path.exists("xsim.dir/work.test_axil/xsimk.so"):
-        subprocess.run(["xvlog", src_path / "test_axil.v"])
-        subprocess.run(["xelab", "work.test_axil", "-dll"])
-
-    cocotb_vivado.run(module="test_axil", xsim_design="xsim.dir/work.test_axil/xsimk.so", top_level_lang="verilog")
-
+    runner.test(
+        test_module=__name__,  # this module
+        hdl_toplevel=toplevel,
+        hdl_toplevel_lang="verilog",
+        waves=waves,
+    )
 
 if __name__ == "__main__":
     test_axil()

@@ -1,4 +1,4 @@
-from cocotb_vivado import run
+from cocotb_vivado import get_runner
 import subprocess
 import os
 import pathlib
@@ -77,6 +77,8 @@ async def cocotb_fw_test(dut):
 
 def test_fw():
     src_path = pathlib.Path(__file__).parent.absolute()
+    toplevel = "fw_wrapper"
+    runner = get_runner("vivado")
 
     shutil.rmtree("fw", ignore_errors=True)
     if not os.path.exists("fw/fw.xpr"):
@@ -88,9 +90,12 @@ def test_fw():
         subprocess.run(["xvhdl", "-prj", f"{src_path}/fw/sim_export/xsim/vhdl.prj"])
         subprocess.run(["./fw/sim_export/xsim/fw_wrapper.sh", "-step", "elaborate"])
 
-    run(module="test_fw", xsim_design="xsim.dir/fw_wrapper/xsimk.so", top_level_lang="verilog")
-
-
+    runner.sim_shlib_path = "xsim.dir/fw_wrapper/xsimk.so"
+    runner.test(
+        test_module=__name__,  # this module
+        hdl_toplevel=toplevel,
+        hdl_toplevel_lang="verilog",
+    )
 
 if __name__ == "__main__":
     test_fw()

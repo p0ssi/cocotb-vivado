@@ -1,9 +1,7 @@
-import subprocess
-import os
 import pathlib
-import shutil
 
 import cocotb_vivado
+from cocotb_vivado import get_runner
 import cocotb
 from cocotb.triggers import Timer
 
@@ -21,14 +19,22 @@ async def simple_test(dut):
 def test_simple():
     src_path = pathlib.Path(__file__).parent.absolute()
 
-    shutil.rmtree("xsim.dir", ignore_errors=True)
+    toplevel = "tb"
+    waves = False
+    runner = get_runner("vivado")
 
-    if not os.path.exists("xsim.dir/work.tb/xsimk.so"):
-        subprocess.run(["xvlog", src_path / "tb.v"])
-        subprocess.run(["xelab", "work.tb", "-dll"])
+    runner.build(
+        sources=[src_path / "tb.v"],
+        hdl_toplevel=toplevel,
+        waves=waves,
+        always=True  # always rebuild
+    )
 
-    cocotb_vivado.run(module="test_simple", xsim_design="xsim.dir/work.tb/xsimk.so", top_level_lang="verilog")
-
-
+    runner.test(
+        test_module=__name__,  # this module
+        hdl_toplevel=toplevel,
+        hdl_toplevel_lang="verilog",
+        waves=waves,
+    )
 if __name__ == "__main__":
     test_simple()
