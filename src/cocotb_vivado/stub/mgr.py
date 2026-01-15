@@ -1,4 +1,5 @@
 from cocotb_vivado import xsi
+from pathlib import Path
 
 MODULE = 0
 REG = 1
@@ -99,13 +100,13 @@ class CbClosure(object):
 class Mgr(object):
     _inst = None
 
-    def __init__(self, xsim_design):
+    def __init__(self, xsim_design: Path, tracefile: Path|None=None):
         self.xsim_design = xsim_design
 
         self.cb_d = {}
         self._stop_request = False
 
-        self.xsi = xsi.XSI(self.xsim_design)
+        self.xsi = xsi.XSI(self.xsim_design, tracefile)
 
         self.ports = {}
         self.init_ports()
@@ -173,8 +174,8 @@ class Mgr(object):
         return cls._inst
 
     @classmethod
-    def init(cls, xsim_design):
-        cls._inst = Mgr(xsim_design)
+    def init(cls, xsim_design: Path, tracefile: Path|None = None):
+        cls._inst = Mgr(xsim_design, tracefile)
         return cls._inst
 
     # HACK / CHANGE !
