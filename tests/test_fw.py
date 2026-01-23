@@ -1,8 +1,5 @@
-from cocotb_vivado import get_runner
-import subprocess
-import os
+from cocotb_vivado import get_runner, execute_tcl
 import pathlib
-import shutil
 
 import cocotb
 from cocotb.triggers import Timer
@@ -77,24 +74,27 @@ async def cocotb_fw_test(dut):
 
 def test_fw():
     src_path = pathlib.Path(__file__).parent.absolute()
+    tcl_path = src_path / "fw.tcl"
+    xpr_path = src_path / "fw" / "fw.xpr"
     toplevel = "fw_wrapper"
     runner = get_runner("vivado")
+    waves = False
 
-    shutil.rmtree("fw", ignore_errors=True)
-    if not os.path.exists("fw/fw.xpr"):
-        subprocess.run(["vivado", "-nolog", "-mode", "tcl", "-source", src_path / "fw.tcl"])
+    # run tcl script to generate project file when generated xpr is outdated or missing.
+    execute_tcl(tcl_path, output=xpr_path)
 
-    shutil.rmtree("xsim.dir", ignore_errors=True)
-    if not os.path.exists("xsim.dir/fw_wrapper/xsimk.so"):
-        subprocess.run(["xvlog", "-prj", f"{src_path}/fw/sim_export/xsim/vlog.prj"])
-        subprocess.run(["xvhdl", "-prj", f"{src_path}/fw/sim_export/xsim/vhdl.prj"])
-        subprocess.run(["./fw/sim_export/xsim/fw_wrapper.sh", "-step", "elaborate"])
+    runner.build(
+        sources=[xpr_path],
+        hdl_toplevel=toplevel,
+        waves=waves,
+        always=True  # always rebuild
+    )
 
-    runner.sim_shlib_path = "xsim.dir/fw_wrapper/xsimk.so"
     runner.test(
         test_module=__name__,  # this module
         hdl_toplevel=toplevel,
         hdl_toplevel_lang="verilog",
+        waves=waves,
     )
 
 if __name__ == "__main__":

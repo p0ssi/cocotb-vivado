@@ -7,6 +7,8 @@ from cocotb.runner import Command, Simulator, UnknownFileExtension, is_vhdl_sour
 from cocotb.runner import get_runner as get_runner_orig
 
 from .stub.mgr import Mgr
+from .vivado import Xpr
+
 
 class Vivado(Simulator):
     supported_gpi_interfaces = {"verilog": ["xsi"]}
@@ -14,6 +16,7 @@ class Vivado(Simulator):
     def __init__(self) -> None:
         super().__init__()
         self.sim_shlib_path = None
+        self.xpr = None
 
     @staticmethod
     def _simulator_in_path() -> None:
@@ -24,6 +27,19 @@ class Vivado(Simulator):
     def _build_command(self) -> List[Command]:
         # default location for shared object
         self.sim_shlib_path = self.build_dir / "xsim.dir" / self._get_top_module_name() / "xsimk.so"
+
+        # check if sources contain .xpr
+        if len(self.sources) == 1:
+            if self.sources[0].suffix == ".xpr":
+                self.xpr = Xpr(
+                    xpr_path=self.sources[0],
+                    hdl_toplevel=self.hdl_toplevel,
+                    build_dir=self.build_dir,
+                )
+                self.sim_shlib_path = self.xpr.build(
+                    always=self.always,
+                )
+                return []
 
         # sort the sources into vhdl and verilog
         for source in self.sources:

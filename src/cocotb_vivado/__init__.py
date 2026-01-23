@@ -19,3 +19,5 @@ cocotb.triggers.Edge = clock_scheduler.Edge
 import cocotb.runner
 from .vivado_runner import get_runner
 cocotb.runner.get_runner = get_runner
+
+from .vivado import execute_tcl
