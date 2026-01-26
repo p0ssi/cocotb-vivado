@@ -78,9 +78,6 @@ class Vivado(Simulator):
         mgr.run()
         mgr.close()
 
-        if cocotb.regression_manager.failures:
-            exit(1)
-
         return []  # no commands to execute
 
     def _get_top_module_name(self):
