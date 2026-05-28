@@ -55,6 +55,7 @@ class Vivado(Simulator):
 
         xelab_args = list(self.build_args)
         xelab_args += ["-dll"]
+        xelab_args += self._get_parameter_options(self.parameters)
         if self.waves:
             xelab_args += ["-debug", "typical"]
 
@@ -74,7 +75,10 @@ class Vivado(Simulator):
         return cmds
 
     def _get_parameter_options(self, parameters: Mapping[str, object]) -> Command:
-        return [f"--define {name}={value}" for name, value in parameters.items()]
+        out: Command = []
+        for name, value in parameters.items():
+            out += ["-generic_top", f"{name}={value}"]
+        return out
 
     def _test_command(self) -> List[Command]:
         # bluntly misuse this method to execute simulator in Python rather than in a subprocess
