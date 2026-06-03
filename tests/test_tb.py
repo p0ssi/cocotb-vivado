@@ -1,15 +1,15 @@
-from cocotb_vivado import run
-import subprocess
+"""Clock + vector-pin behavioral test, exercising the Python runner."""
+
 import os
-import pathlib
-import shutil
+from pathlib import Path
 
 import cocotb
-from cocotb.clock import Clock
-from cocotb.triggers import Edge, Timer
-from cocotb.binary import BinaryValue
-
 import pytest
+from cocotb.binary import BinaryValue
+from cocotb.clock import Clock
+from cocotb.triggers import Timer
+
+from cocotb_vivado.runner import get_runner
 
 
 async def on_signal(signal, timer):
@@ -48,36 +48,42 @@ async def cocotb_tb_test(dut):
 @cocotb.test()
 async def cocotb_tb_test_fail(dut):
     await Timer(10, "ns")
-    assert 1 == 0
+    pytest.fail("deliberate failure to exercise the xfail path")
 
 
-def run_tb(module="test_tb"):
-    src_path = pathlib.Path(__file__).parent.absolute()
+def _run_tb(test_module="test_tb", testcase="cocotb_tb_test"):
+    proj_path = Path(__file__).resolve().parent
+    sources = [proj_path / "tb.v"]
 
-    shutil.rmtree("xsim.dir", ignore_errors=True)
+    sim = os.getenv("SIM", "vivado")
+    runner = get_runner(sim)
 
-    if not os.path.exists("xsim.dir/work.tb/xsimk.so"):
-        subprocess.run(["xvlog", src_path / "tb.v"])
-        subprocess.run(["xelab", "work.tb", "-dll"])
-
-    run(module=module, xsim_design="xsim.dir/work.tb/xsimk.so", top_level_lang="verilog")
+    runner.build(
+        sources=sources,
+        hdl_toplevel="tb",
+        always=True,
+        timescale=("1ns", "1ps"),
+    )
+    runner.test(
+        hdl_toplevel="tb",
+        test_module=test_module,
+        hdl_toplevel_lang="verilog",
+        testcase=testcase,
+    )
 
 
 def test_tb():
-    os.environ["TESTCASE"] = "cocotb_tb_test"
-    run_tb()
+    _run_tb(testcase="cocotb_tb_test")
 
 
 @pytest.mark.xfail
 def test_tb_fail():
-    os.environ["TESTCASE"] = "cocotb_tb_test_fail"
-    run_tb()
+    _run_tb(testcase="cocotb_tb_test_fail")
 
 
 @pytest.mark.xfail
 def test_tb_fail_init():
-    os.environ["TESTCASE"] = "cocotb_tb_test"
-    run_tb(module="no_exisitng")
+    _run_tb(test_module="no_existing")
 
 
 if __name__ == "__main__":

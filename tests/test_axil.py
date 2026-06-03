@@ -1,14 +1,16 @@
-import cocotb_vivado
-import subprocess
 import os
 import pathlib
 import shutil
+import subprocess
 
 import cocotb
-from cocotb.triggers import Timer
+import pytest
 from cocotb.clock import Clock
-
+from cocotb.triggers import Timer
 from cocotbext.axi import AxiLiteBus, AxiLiteMaster, AxiLiteRam
+
+import cocotb_vivado
+import cocotb_vivado.mock_triggers
 
 
 @cocotb.test()
@@ -22,7 +24,7 @@ async def cocotb_axil_test(dut):
     dut.rst.value = 0
 
     axil_master = AxiLiteMaster(AxiLiteBus.from_prefix(dut, "axil"), dut.clk, dut.rst)
-    axil_ram = AxiLiteRam(AxiLiteBus.from_prefix(dut, "axil"), dut.clk, dut.rst, size=2**16)
+    AxiLiteRam(AxiLiteBus.from_prefix(dut, "axil"), dut.clk, dut.rst, size=2**16)
 
     data_in = list(range(16))
 
@@ -37,6 +39,7 @@ async def cocotb_axil_test(dut):
     assert data_in == data_out
 
 
+@pytest.mark.in_process_xsi
 def test_axil():
     src_path = pathlib.Path(__file__).parent.absolute()
 
@@ -46,7 +49,11 @@ def test_axil():
         subprocess.run(["xvlog", src_path / "test_axil.v"])
         subprocess.run(["xelab", "work.test_axil", "-dll"])
 
-    cocotb_vivado.run(module="test_axil", xsim_design="xsim.dir/work.test_axil/xsimk.so", top_level_lang="verilog")
+    cocotb_vivado.run(
+        module="test_axil",
+        xsim_design="xsim.dir/work.test_axil/xsimk.so",
+        top_level_lang="verilog",
+    )
 
 
 if __name__ == "__main__":

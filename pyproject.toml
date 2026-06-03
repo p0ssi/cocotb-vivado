@@ -162,3 +162,6 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers"
+markers = [
+    "in_process_xsi: dlopens xsimk.so in the pytest process; needs LD_LIBRARY_PATH exported before Python starts",
+]

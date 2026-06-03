@@ -1,5 +1,5 @@
 
-create_project -force fw fw -part xczu9eg-ffvb1156-2-e
+create_project -force fw fw -part xczu7eg-ffvc1156-2-e
 
 variable design_name
 set design_name fw
