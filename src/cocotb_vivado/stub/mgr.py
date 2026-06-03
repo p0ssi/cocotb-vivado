@@ -4,7 +4,7 @@ MODULE = 0
 REG = 1
 
 
-class XsiPortHandle(object):
+class XsiPortHandle:
     def __init__(self, mgr, name, port_id, size):
         self.name = name
         self.port_id = port_id
@@ -47,7 +47,7 @@ class XsiPortHandle(object):
         return self.mgr.xsi.get_value(self.port_id)
 
 
-class XsimRootHandle(object):
+class XsimRootHandle:
     def __init__(self, mgr):
         self.mgr = mgr
 
@@ -81,7 +81,7 @@ class XsimRootHandle(object):
         return self.mgr.ports[name]
 
 
-class CbClosure(object):
+class CbClosure:
     def __init__(self, time_off, cb, ud):
         self.time_off = time_off
         self.cb = cb
@@ -96,16 +96,16 @@ class CbClosure(object):
         self.cb = None
 
 
-class Mgr(object):
+class Mgr:
     _inst = None
 
-    def __init__(self, xsim_design):
+    def __init__(self, xsim_design, wdb_file=None):
         self.xsim_design = xsim_design
 
         self.cb_d = {}
         self._stop_request = False
 
-        self.xsi = xsi.XSI(self.xsim_design)
+        self.xsi = xsi.XSI(self.xsim_design, wdb_file=wdb_file)
 
         self.ports = {}
         self.init_ports()
@@ -173,8 +173,8 @@ class Mgr(object):
         return cls._inst
 
     @classmethod
-    def init(cls, xsim_design):
-        cls._inst = Mgr(xsim_design)
+    def init(cls, xsim_design, wdb_file=None):
+        cls._inst = Mgr(xsim_design, wdb_file=wdb_file)
         return cls._inst
 
     # HACK / CHANGE !

@@ -25,13 +25,16 @@ class XSI:
             ("bVal", ctypes.c_uint32),
         ]
 
-    def __init__(self, xsim_design, tracefile=None):
+    def __init__(self, xsim_design, tracefile=None, wdb_file=None):
         self.xsi_lib = ctypes.cdll.LoadLibrary(xsim_design)
         self.init_func_definitions()
 
-        self.xsi_handle = self.open(xsim_dir="")
+        if wdb_file is not None:
+            self.xsi_handle = self.open(xsim_dir="", wdb_file=wdb_file)
+        else:
+            self.xsi_handle = self.open(xsim_dir="")
 
-        if tracefile is not None:
+        if tracefile is not None or wdb_file is not None:
             self.xsi_lib.xsi_trace_all(self.xsi_handle)
 
     def init_func_definitions(self):
