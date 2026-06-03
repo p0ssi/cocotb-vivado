@@ -1,5 +1,5 @@
 import ctypes
-from functools import lru_cache
+from functools import cache
 
 
 class XSI:
@@ -86,19 +86,23 @@ class XSI:
 
     def open(self, xsim_dir, wdb_file="xsi.wdb", log="xsi.log"):
         info = XSI.xsi_setup_info(
-            logFileName=log.encode("utf-8"), wdbFileName=wdb_file.encode("utf-8"), xsimDir=xsim_dir.encode("utf-8")
+            logFileName=log.encode("utf-8"),
+            wdbFileName=wdb_file.encode("utf-8"),
+            xsimDir=xsim_dir.encode("utf-8"),
         )
         return self.xsi_lib.xsi_open(ctypes.byref(info))
 
-    @lru_cache(maxsize=None)
+    @cache
     def get_port_name(self, port_id):
-        return self.xsi_lib.xsi_get_str_port(self.xsi_handle, port_id, XSI.xsiNameTopPort).decode("utf-8")
+        return self.xsi_lib.xsi_get_str_port(
+            self.xsi_handle, port_id, XSI.xsiNameTopPort
+        ).decode("utf-8")
 
     def put_value(self, port_id, value):
         vlog_val = self._binstr_to_vlog_logicval(value)
         self.xsi_lib.xsi_put_value(self.xsi_handle, port_id, vlog_val)
 
-    @lru_cache(maxsize=None)
+    @cache
     def _binstr_to_vlog_logicval(self, value):
         size = len(value)
         vlog_val = (XSI.s_xsi_vlog_logicval * ((size // 32) + 1))()
@@ -110,10 +114,10 @@ class XSI:
             # 0=00, 1=10, X=11, Z=01
             if v == "1":
                 vlog_val[si].aVal |= 0x1 << bi
-            elif v == "X" or v == "x":
+            elif v in {"X", "x"}:
                 vlog_val[si].aVal |= 0x1 << bi
                 vlog_val[si].bVal |= 0x1 << bi
-            elif v == "z" or v == "Z":
+            elif v in {"z", "Z"}:
                 vlog_val[si].bVal |= 0x1 << bi
 
             i += 1
@@ -139,11 +143,11 @@ class XSI:
             b_b = (vlog_val[si].bVal & (0x1 << bi)) > 0
 
             b_val = "0"
-            if b_a == True and b_b == False:
+            if b_a and not b_b:
                 b_val = "1"
-            elif b_a == True and b_b == True:
+            elif b_a and b_b:
                 b_val = "x"
-            elif b_a == False and b_b == True:
+            elif not b_a and b_b:
                 b_val = "z"
 
             value[size - 1 - i] = b_val
@@ -152,9 +156,11 @@ class XSI:
 
         return "".join(value)
 
-    @lru_cache(maxsize=None)
+    @cache
     def get_port_size(self, port_id):
-        return self.xsi_lib.xsi_get_int_port(self.xsi_handle, port_id, XSI.xsiHDLValueSize)
+        return self.xsi_lib.xsi_get_int_port(
+            self.xsi_handle, port_id, XSI.xsiHDLValueSize
+        )
 
     def get_precision(self):
         return self.xsi_lib.xsi_get_int(self.xsi_handle, XSI.xsiTimePrecisionKernel)
@@ -174,7 +180,9 @@ class XSI:
         return staus
 
     def get_port_number(self, name):
-        return self.xsi_lib.xsi_get_port_number(self.xsi_handle, ctypes.create_string_buffer(name.encode("utf-8")))
+        return self.xsi_lib.xsi_get_port_number(
+            self.xsi_handle, ctypes.create_string_buffer(name.encode("utf-8"))
+        )
 
     def get_error_info(self):
         return self.xsi_lib.xsi_close(self.xsi_handle)

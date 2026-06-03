@@ -1,14 +1,11 @@
 import logging
-import typing
-from collections import defaultdict
 from decimal import Decimal
 from numbers import Real
 
-import cocotb.clock
 from cocotb import start_soon
-from cocotb.utils import get_sim_steps, get_time_from_sim_steps, get_sim_time
 from cocotb.task import Task
-from cocotb.triggers import Timer, Event
+from cocotb.triggers import Event, Timer
+from cocotb.utils import get_sim_steps, get_sim_time, get_time_from_sim_steps
 
 
 class ScheduledClock:
@@ -17,7 +14,8 @@ class ScheduledClock:
 
     Mimicing cocotb v1.9.2 interface, although cycle count mechanism is deprecated in v2.0.0
     """
-    def __init__(self, signal, period: float|Real|Decimal, units: str = "step"):
+
+    def __init__(self, signal, period: float | Real | Decimal, units: str = "step"):
         self.signal = signal
         self.period = get_sim_steps(period, units)
         self.frequency = 1 / get_time_from_sim_steps(self.period, units="us")
@@ -28,8 +26,8 @@ class ScheduledClock:
         self._start_time = 0
         self._stop_event = Event()
 
-    async def start(self, cycles: int|None = None, start_high: bool = True):
-        """ Start the clock by adding it to the scheduler's clock collection. """
+    async def start(self, cycles: int | None = None, start_high: bool = True):
+        """Start the clock by adding it to the scheduler's clock collection."""
         self.cycles = cycles
         self._remaining_cycles = self.cycles
         self.start_high = start_high
@@ -46,11 +44,11 @@ class ScheduledClock:
         _scheduler.remove_clock(self)
 
     def _drive_signal(self, new_value: bool):
-        """ Set clock signal state """
+        """Set clock signal state"""
         if self._remaining_cycles is not None:
             current_value = self.signal.value
             if current_value.is_resolvable:
-                if current_value  ^ self.start_high and not new_value:
+                if current_value ^ self.start_high and not new_value:
                     # falling edge, reduce the cycle count
                     self._remaining_cycles -= 1
                 if self._remaining_cycles <= 0:
@@ -68,6 +66,7 @@ class ClockScheduler:
     Keeps track of test cases' Clock objects, and implements polling mechanism to implement
     alternative trigger events at every input clock edge.
     """
+
     def __init__(self):
         self.clocks: list[ScheduledClock] = []
         self.poll_event = Event()
@@ -90,7 +89,9 @@ class ClockScheduler:
 
         for clk in self.clocks:
             if new_clock.signal == clk.signal:
-                raise RuntimeError(f"signal {clk.signal._name} already assigned a clock driver")
+                raise RuntimeError(
+                    f"signal {clk.signal._name} already assigned a clock driver"
+                )
 
         # add the clock to scheduler
         self.clocks.append(new_clock)
@@ -100,7 +101,11 @@ class ClockScheduler:
             self._scheduler_task = start_soon(self.run())
 
         # Log clock configuration
-        self.log.info("Driving Clock signal: '%s', Frequency: %.3f MHz", new_clock.signal._name, new_clock.frequency)
+        self.log.info(
+            "Driving Clock signal: '%s', Frequency: %.3f MHz",
+            new_clock.signal._name,
+            new_clock.frequency,
+        )
 
     def remove_clock(self, clock: ScheduledClock):
         self.clocks.remove(clock)
@@ -137,16 +142,20 @@ class ClockScheduler:
 
         # Find earliest time and collect all transitions at that time
         next_transition_time = min(t for t, _ in clk_transitions)
-        next_transitions = [item for t, item in clk_transitions if t == next_transition_time]
+        next_transitions = [
+            item for t, item in clk_transitions if t == next_transition_time
+        ]
 
         return next_transition_time, next_transitions
 
     async def run(self):
-        """ ClockScheduler main coroutine. """
+        """ClockScheduler main coroutine."""
         self.log.info("ClockScheduler started")
         while self.clocks:
             sim_time = get_sim_time()
-            next_transition_time, next_clock_transition_ops = self._get_clock_transitions(sim_time)
+            next_transition_time, next_clock_transition_ops = (
+                self._get_clock_transitions(sim_time)
+            )
 
             wait_time = next_transition_time - sim_time
             await Timer(wait_time, units="step")
