@@ -23,6 +23,7 @@ format:
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -37,18 +38,60 @@ from .sim_dir import SimDirInfo, read_sim_dir
 PathLike = Union[Path, str]
 
 
+def _hash_file(path: Path) -> str:
+    """SHA-256 hex digest of file contents. Empty string if missing."""
+    if not path.exists() or not path.is_file():
+        return ""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _hash_dir(root: Path) -> str:
+    """SHA-256 of a sorted ``(relpath, sha256)`` manifest under ``root``."""
+    if not root.is_dir():
+        return ""
+    items: list = []
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            items.append(f"{p.relative_to(root)}\0{_hash_file(p)}")
+    return hashlib.sha256("\n".join(items).encode("utf-8")).hexdigest()
+
+
 class VivadoSource(ABC):
     """Abstract Vivado-managed source for :meth:`Vivado.build`.
 
     Subclasses know how to produce a Vivado simulation-scripts
     directory (with ``*.prj`` files and a sibling xelab ``*.sh``
     script) and return a :class:`SimDirInfo` view of it. Caching
-    via mtime checks is the subclass's responsibility.
+    via mtime checks is the subclass's responsibility; the runner's
+    Tier 1 cache consults :meth:`fingerprint` to detect input
+    changes that mtime can't see (content-vs-mtime divergence).
     """
 
     @abstractmethod
-    def prepare(self, build_dir: Path, hdl_library: str) -> SimDirInfo:
-        """(Re)generate the simulation scripts and return their distilled view."""
+    def prepare(
+        self, build_dir: Path, hdl_library: str, force: bool = False
+    ) -> SimDirInfo:
+        """(Re)generate the simulation scripts and return their distilled view.
+
+        ``force=True`` bypasses the subclass's mtime check, used by the
+        runner on a Tier 1 cache miss to ensure Vivado re-runs even
+        when the inputs' content changed without their mtimes changing
+        (e.g., post ``git checkout``).
+        """
+
+    @abstractmethod
+    def fingerprint(self) -> dict:
+        """JSON-serializable identity for the runner's Tier 1 cache signature.
+
+        Captures the source's *inputs* (constructor kwargs + content
+        hashes of file inputs) — not its derived outputs. When
+        ``builder_tcl`` is set, the TCL is the canonical input; the
+        artifacts it produces are derived and not hashed here.
+        """
 
 
 class VivadoIp(VivadoSource):
@@ -100,7 +143,33 @@ class VivadoIp(VivadoSource):
         )
         self._part_num = part_num
 
-    def prepare(self, build_dir: Path, hdl_library: str) -> SimDirInfo:
+    def fingerprint(self) -> dict:
+        # builder_tcl, when set, is the canonical input; the XCIs it
+        # produces are derived. Hash the TCL only; treat XCI paths as
+        # identifiers (path strings). Without builder_tcl, the XCIs
+        # are the canonical inputs and must be hashed.
+        paths_field: object
+        if self.builder_tcl is not None:
+            paths_field = [str(p) for p in self.paths]
+            builder = {
+                "path": str(self.builder_tcl),
+                "sha256": _hash_file(self.builder_tcl),
+            }
+        else:
+            paths_field = [
+                {"path": str(p), "sha256": _hash_file(p)} for p in self.paths
+            ]
+            builder = None
+        return {
+            "kind": "VivadoIp",
+            "paths": paths_field,
+            "builder_tcl": builder,
+            "part_num": _resolve_part_num(self._part_num) or "",
+        }
+
+    def prepare(
+        self, build_dir: Path, hdl_library: str, force: bool = False
+    ) -> SimDirInfo:
         part_num = _resolve_part_num(self._part_num)
         if not part_num:
             raise SystemExit(
@@ -114,14 +183,16 @@ class VivadoIp(VivadoSource):
         ]
 
         if self.builder_tcl is not None:
-            needs_build = any(
+            needs_build = force or any(
                 not p.exists() or outdated(p, [self.builder_tcl])
                 for p in resolved_paths
             )
             if needs_build:
                 execute_tcl([self.builder_tcl], cwd=build_dir)
 
-        outdated_paths = self._outofdate(build_dir, resolved_paths)
+        outdated_paths = (
+            resolved_paths if force else self._outofdate(build_dir, resolved_paths)
+        )
         if outdated_paths:
             tcl_path = self._write_generation_tcl(outdated_paths, build_dir, part_num)
             execute_tcl([tcl_path], cwd=build_dir)
@@ -233,14 +304,41 @@ class VivadoProject(VivadoSource):
         )
         self._part_num = part_num
 
-    def prepare(self, build_dir: Path, hdl_library: str) -> SimDirInfo:
+    def fingerprint(self) -> dict:
+        # builder_tcl, when set, is the canonical input; the .xpr it
+        # produces is derived. Without builder_tcl, the .xpr is the
+        # canonical input and must be hashed.
+        if self.builder_tcl is not None:
+            xpr_field: object = str(self.xpr_path)
+            builder = {
+                "path": str(self.builder_tcl),
+                "sha256": _hash_file(self.builder_tcl),
+            }
+        else:
+            xpr_field = {
+                "path": str(self.xpr_path),
+                "sha256": _hash_file(self.xpr_path),
+            }
+            builder = None
+        return {
+            "kind": "VivadoProject",
+            "xpr": xpr_field,
+            "builder_tcl": builder,
+            "part_num": self._part_num or "",
+        }
+
+    def prepare(
+        self, build_dir: Path, hdl_library: str, force: bool = False
+    ) -> SimDirInfo:
         xpr_path = (
             self.xpr_path
             if self.xpr_path.is_absolute()
             else (build_dir / self.xpr_path).resolve()
         )
 
-        if self.builder_tcl is not None and outdated(xpr_path, [self.builder_tcl]):
+        if self.builder_tcl is not None and (
+            force or outdated(xpr_path, [self.builder_tcl])
+        ):
             execute_tcl([self.builder_tcl], cwd=build_dir)
 
         export_dir = xpr_path.parent / f"{xpr_path.stem}.sim" / "sim_1" / "behav"
@@ -250,7 +348,7 @@ class VivadoProject(VivadoSource):
         if self.builder_tcl is not None:
             rebuild_inputs.append(self.builder_tcl)
 
-        if outdated(result_file, rebuild_inputs):
+        if force or outdated(result_file, rebuild_inputs):
             tcl_path = build_dir / "launch_xpr.tcl"
             lines = [f"open_project {xpr_path}"]
             if self._part_num:
@@ -301,7 +399,33 @@ class VivadoExportedSim(VivadoSource):
         )
         self.force_extract: bool = force_extract
 
-    def prepare(self, build_dir: Path, hdl_library: str) -> SimDirInfo:
+    def fingerprint(self) -> dict:
+        # tcl_file, when set, is the canonical input. Without it the
+        # source is content-defined by whatever's already in result_dir,
+        # so hash that directory's manifest instead.
+        if self.tcl_file is not None:
+            tcl_field: object = {
+                "path": str(self.tcl_file),
+                "sha256": _hash_file(self.tcl_file),
+            }
+            result_field: object = str(self.result_dir)
+        else:
+            tcl_field = None
+            result_field = {
+                "path": str(self.result_dir),
+                "sha256": _hash_dir(self.result_dir),
+            }
+        return {
+            "kind": "VivadoExportedSim",
+            "tcl_file": tcl_field,
+            "result_dir": result_field,
+            "result_file": str(self.result_file) if self.result_file else None,
+            "force_extract": self.force_extract,
+        }
+
+    def prepare(
+        self, build_dir: Path, hdl_library: str, force: bool = False
+    ) -> SimDirInfo:
         export_dir = (
             self.result_dir
             if self.result_dir.is_absolute()
@@ -317,7 +441,9 @@ class VivadoExportedSim(VivadoSource):
             )
         )
 
-        if self.tcl_file is not None and outdated(result_file, [self.tcl_file]):
+        if self.tcl_file is not None and (
+            force or outdated(result_file, [self.tcl_file])
+        ):
             tcl_paths: list = [self.tcl_file]
             if self.force_extract:
                 forced = build_dir / "extract_scripts.tcl"
@@ -421,7 +547,35 @@ class VivadoBd(VivadoSource):
         """
         return "xil_defaultlib"
 
-    def prepare(self, build_dir: Path, hdl_library: str) -> SimDirInfo:
+    def fingerprint(self) -> dict:
+        # builder_tcl, when set, is the canonical input; the .bd it
+        # produces is derived. Without builder_tcl, the .bd is the
+        # canonical input and must be hashed. wrapper / top change the
+        # generated toplevel, so they belong in the identity.
+        if self.builder_tcl is not None:
+            bd_field: object = str(self.bd_path)
+            builder = {
+                "path": str(self.builder_tcl),
+                "sha256": _hash_file(self.builder_tcl),
+            }
+        else:
+            bd_field = {
+                "path": str(self.bd_path),
+                "sha256": _hash_file(self.bd_path),
+            }
+            builder = None
+        return {
+            "kind": "VivadoBd",
+            "bd": bd_field,
+            "builder_tcl": builder,
+            "part_num": _resolve_part_num(self._part_num) or "",
+            "wrapper": self.wrapper,
+            "top": self._top_override,
+        }
+
+    def prepare(
+        self, build_dir: Path, hdl_library: str, force: bool = False
+    ) -> SimDirInfo:
         part_num = _resolve_part_num(self._part_num)
         if not part_num:
             raise SystemExit(
@@ -436,7 +590,9 @@ class VivadoBd(VivadoSource):
             else (build_dir / self.bd_path).resolve()
         )
 
-        if self.builder_tcl is not None and outdated(bd_path, [self.builder_tcl]):
+        if self.builder_tcl is not None and (
+            force or outdated(bd_path, [self.builder_tcl])
+        ):
             execute_tcl([self.builder_tcl], cwd=build_dir)
 
         proj_name = self.bd_path.stem
@@ -448,7 +604,7 @@ class VivadoBd(VivadoSource):
         if self.builder_tcl is not None:
             rebuild_inputs.append(self.builder_tcl)
 
-        if outdated(result_file, rebuild_inputs):
+        if force or outdated(result_file, rebuild_inputs):
             tcl_path = self._write_generation_tcl(
                 bd_path, proj_dir, proj_name, part_num, build_dir
             )
