@@ -160,6 +160,117 @@ runner.build(...)                          # default: no waves
 
 All formats land in `{build_dir}/{hdl_toplevel}.{ext}` for symmetry.
 
+## Vivado-managed sources (IP / BD / XPR)
+
+Vivado inputs are passed to the runner via **source objects** from
+`cocotb_vivado.vivado`, alongside plain HDL paths in
+`runner.build(sources=[...])`. Pick the class by input file format:
+
+| Input | Class | Vivado mechanism |
+|-------|-------|------------------|
+| `.xci` | `VivadoIp` | `add_files; export_ip_user_files` |
+| `.bd` | `VivadoBd` | `make_wrapper; launch_simulation -scripts_only` |
+| `.xpr` | `VivadoProject` | `open_project; launch_simulation -scripts_only` |
+| `.tcl` / pre-extracted | `VivadoExportedSim` | runs your TCL |
+
+A source object sits in the same `sources=` list as plain HDL. Here a
+`blk_mem_gen` IP is instantiated by a hand-written wrapper, and the wrapper
+is the toplevel (`tests/test_bram.py`):
+
+```python
+from pathlib import Path
+
+from cocotb_vivado.runner import get_runner
+from cocotb_vivado.vivado import VivadoIp
+
+here = Path(__file__).resolve().parent
+runner = get_runner("vivado")
+runner.build(
+    sources=[
+        VivadoIp(
+            "ip/blk_mem_kilobyte/blk_mem_kilobyte.xci",
+            builder_tcl=here / "ip" / "blk_mem_kilobyte" / "regen.tcl",
+            part_num="xczu7eg-ffvc1156-2-e",
+        ),
+        here / "bram_wrap.sv",
+    ],
+    hdl_toplevel="bram_wrap",
+)
+```
+
+A block design or a project defines its own toplevel instead, and reports
+the names to use (`tests/test_bd_axi.py`):
+
+```python
+from cocotb_vivado.vivado import VivadoBd
+
+bd = VivadoBd(
+    "ip/bd_axi/bd_axi.bd",
+    builder_tcl=here / "ip" / "bd_axi" / "regen.tcl",
+    part_num="xczu7eg-ffvc1156-2-e",
+)
+runner.build(
+    sources=[bd],
+    hdl_toplevel=bd.top,        # "bd_axi_wrapper" — Vivado's wrapper name
+    hdl_library=bd.library,     # "xil_defaultlib"
+)
+```
+
+Note the path convention: a relative `.xci` / `.bd` path resolves **under
+the build directory** — that is where `builder_tcl` deposits it — while
+`builder_tcl` itself is an input you already have, so pass it absolute
+(relative resolves against the current working directory).
+
+**One design-defining source per build.** `hdl_library` is a single
+setting for the whole build — every plain source is compiled into it and
+the toplevel is elaborated from it — so a `VivadoBd` and your own RTL
+necessarily share one library. `VivadoBd`, `VivadoProject` and
+`VivadoExportedSim` each extract into `xil_defaultlib`, so combining two
+of them in one build merges two independently generated structural HDL
+sets and risks name collisions. Use at most one of those three, plus any
+number of `VivadoIp` and plain HDL sources.
+
+Each source self-orchestrates its Vivado batch invocation (with
+mtime-based caching) and returns a parsed view of the resulting
+Vivado-emitted `xsim/` directory: per-language `.prj` files (consumed
+via `xvlog -prj` / `xvhdl -prj`) and a sibling `*.sh` script whose
+`xelab` command line contributes the `-L` library set and any
+`<lib>.glbl` modules. `VivadoBd`, `VivadoProject` and `VivadoExportedSim`
+go through `launch_simulation -scripts_only -absolute_path`;
+`VivadoIp` uses `export_ip_user_files`.
+
+**Block designs and interface flattening.** XSI exposes only top-level
+*scalar* ports — there is no hierarchical or interface access. A block
+design whose top is built from `create_bd_intf_port` (AXI/AXIS/BRAM) is
+therefore not directly drivable. `VivadoBd` defaults to `wrapper=True`,
+generating Vivado's RTL wrapper (`make_wrapper -top`) that flattens each
+interface bundle into discrete scalar ports — the form `cocotbext-axi`
+binds to. `bd.top` reports the resulting `<bd>_wrapper` name so you need
+not hardcode it. For a BD whose top is all plain signals
+(`create_bd_port`), pass `wrapper=False` to elaborate the BD module
+directly (`bd.top` is then the bare `<bd>`).
+
+`part_num` is required on `VivadoIp` and `VivadoBd` (the IP/BD generator
+needs a `set_part` target). `VivadoProject` reads the part from the XPR
+and accepts an optional `part_num` to *retarget* in-memory for
+simulation. `VivadoExportedSim`'s TCL controls its own part. It falls back
+to the `COCOTB_DEFAULT_PART_NUM` environment variable, and
+`cocotb_vivado.vivado.discover_default_part()` is an opt-in helper that
+queries Vivado once and caches the answer. Pure-RTL builds without any
+`VivadoSource` instance never touch the `vivado` binary.
+
+The `.bd` can be committed alongside the test, or regenerated on first
+build by passing `builder_tcl` (a script that constructs it and
+`save_bd_design`s) — the latter keeps the fixture Vivado-version-
+agnostic. To use a block design as a *sub-component* under your own
+top-level RTL, list the `VivadoBd` alongside your HDL and name your
+module as the top: `sources=[VivadoBd("x.bd"), "my_tb.sv"]`,
+`hdl_toplevel="my_tb"`.
+
+See `tests/test_bd_axi.py` for a `VivadoBd` example that flattens an
+AXI-Lite + AXIS block design, and `tests/test_fw.py` for the equivalent
+via a full `VivadoProject`.
+
 ## cocotb extensions
 
 Extensions like [cocotbext-axi](https://github.com/alexforencich/cocotbext-axi)
