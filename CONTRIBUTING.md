@@ -50,10 +50,9 @@ dynamic loader captures its search path at exec time. The test skips
 itself with an explanatory message when the XSI kernel library is not
 loadable, so a missing `LD_LIBRARY_PATH` is a skip, not a failure.
 
-`tests/test_fw.py` still exercises the legacy `cocotb_vivado.run()` path
-and is skipped by default pending its migration to the runner; set
-`COCOTB_VIVADO_TEST_DIRECT=1` to run it. Everything else runs
-unconditionally.
+Every other test runs unconditionally -- there are no opt-in gates, so a
+green `pytest tests/` means the whole suite really ran. Note `pytest
+tests/` does not cover `examples/`; run both.
 
 ## Linting and type checking
 

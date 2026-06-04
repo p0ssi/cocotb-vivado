@@ -142,10 +142,5 @@ create_root_design ""
 set wrapper_file [make_wrapper -files [get_files -filter {FILE_TYPE == "Block Designs"}] -top -import]
 set_property top fw_wrapper [current_fileset -simset]
 
-set_property -name {xsim.elaborate.xelab.more_options} -value {--dll} -objects [current_fileset -simset]
-
-# launch_simulation -absolute_path  -scripts_only -install_path xsim
-export_simulation -directory fw/sim_export -absolute_path -simulator xsim -force 
-
 close_project
 exit

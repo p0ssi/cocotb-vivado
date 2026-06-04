@@ -1,10 +1,15 @@
+"""Block-diagram IP example: AXIS FIFO + AXI-Lite via cocotbext-axi.
+
+``fw.tcl`` builds a Zynq UltraScale+ project. ``VivadoProject``
+runs it on first call and then extracts simulation scripts via
+``launch_simulation -scripts_only`` — exercising the project-build
+hook end-to-end.
+"""
+
 import os
-import pathlib
-import shutil
-import subprocess
+from pathlib import Path
 
 import cocotb
-import pytest
 from cocotb.clock import Clock
 from cocotb.triggers import Timer
 from cocotbext.axi import (
@@ -15,15 +20,8 @@ from cocotbext.axi import (
     AxiStreamSource,
 )
 
-from cocotb_vivado import run
-
-pytestmark = pytest.mark.skipif(
-    not os.getenv("COCOTB_VIVADO_TEST_DIRECT"),
-    reason=(
-        "Legacy cocotb_vivado.run()-based test with IP/BD dependencies. "
-        "Set COCOTB_VIVADO_TEST_DIRECT=1 to run."
-    ),
-)
+from cocotb_vivado.runner import get_runner
+from cocotb_vivado.vivado import VivadoProject
 
 
 async def reset(signal, timer):
@@ -55,9 +53,6 @@ async def cocotb_fw_test(dut):
     await axil_master.write(0x10, data_in)
     data_out = list((await axil_master.read(0x10, 32)).data)
 
-    print(data_in)
-    print(data_out)
-
     assert data_in == data_out
 
     rx_data_send = []
@@ -67,7 +62,6 @@ async def cocotb_fw_test(dut):
         await axis_rx.write(d)
         await axis_rx.wait()
 
-    # rx_data = range(10)
     rx_size = list((await axil_master.read(AXIS_FIFO_BASEADDR + 0x1C, 4)).data)
     assert rx_size == [10, 0, 0, 0]
 
@@ -85,9 +79,6 @@ async def cocotb_fw_test(dut):
 
     await axil_master.write(AXIS_FIFO_BASEADDR + 0x14, [0x20, 0, 0, 0])
 
-    # tx_size = list((await axil_master.read(AXIS_FIFO_BASEADDR + 0xC, 4)).data)
-    # print("tx_size", tx_size)
-
     tx_data = (await axis_tx.recv()).tdata
     assert bytearray(range(8 * 4)) == tx_data
 
@@ -95,24 +86,26 @@ async def cocotb_fw_test(dut):
 
 
 def test_fw():
-    src_path = pathlib.Path(__file__).parent.absolute()
-
-    shutil.rmtree("fw", ignore_errors=True)
-    if not os.path.exists("fw/fw.xpr"):
-        subprocess.run(
-            ["vivado", "-nolog", "-mode", "tcl", "-source", src_path / "fw.tcl"]
-        )
-
-    shutil.rmtree("xsim.dir", ignore_errors=True)
-    if not os.path.exists("xsim.dir/fw_wrapper/xsimk.so"):
-        subprocess.run(["xvlog", "-prj", f"{src_path}/fw/sim_export/xsim/vlog.prj"])
-        subprocess.run(["xvhdl", "-prj", f"{src_path}/fw/sim_export/xsim/vhdl.prj"])
-        subprocess.run(["./fw/sim_export/xsim/fw_wrapper.sh", "-step", "elaborate"])
-
-    run(
-        module="test_fw",
-        xsim_design="xsim.dir/fw_wrapper/xsimk.so",
-        top_level_lang="verilog",
+    proj_path = Path(__file__).resolve().parent
+    runner = get_runner(os.getenv("SIM", "vivado"))
+    runner.build(
+        sources=[
+            VivadoProject(
+                xpr_path="fw/fw.xpr",
+                builder_tcl=proj_path / "fw.tcl",
+            ),
+        ],
+        hdl_toplevel="fw_wrapper",
+        hdl_library="xil_defaultlib",
+        always=True,
+        timescale=("1ns", "1ps"),
+    )
+    runner.test(
+        hdl_toplevel="fw_wrapper",
+        hdl_toplevel_library="xil_defaultlib",
+        test_module="test_fw",
+        hdl_toplevel_lang="verilog",
+        testcase="cocotb_fw_test",
     )
 
 
