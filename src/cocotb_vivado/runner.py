@@ -9,9 +9,11 @@
 """Python runner subclass driving Vivado's XSim binaries.
 
 This module orchestrates XSim binary invocations only: ``xvlog``,
-``xvhdl``, and ``xelab``. The runner supports plain HDL sources;
-Vivado-managed sources (``.xci``, ``.bd``, ``.xpr``) are out of scope
-for this module.
+``xvhdl``, and ``xelab``. Anything that runs the full ``vivado`` tool
+(TCL execution, IP regeneration, project export, part discovery) lives
+in :mod:`cocotb_vivado.vivado` and is reached via Vivado-managed
+source objects (:class:`cocotb_vivado.vivado.VivadoSource` subclasses)
+passed in the runner's ``sources=[...]`` list.
 
 The contract for finding Vivado:
 
@@ -33,6 +35,8 @@ from typing import Literal, Union
 
 from cocotb import runner
 from cocotb.runner import VHDL, Simulator, Verilog
+
+from .vivado import VivadoSource
 
 PathLike = Union[Path, str]
 Command = list[str]
@@ -64,8 +68,13 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
         self.xilinx_libraries: set = set()
         self.snapshot_name: str = ""
         self.wave_paths: dict = {}
+        self.vivado_sources: list[VivadoSource] = []
         self.log = logging.getLogger(__name__)
         super().__init__()
+
+    # ------------------------------------------------------------------
+    # build / test overrides
+    # ------------------------------------------------------------------
 
     def build(
         self,
@@ -88,11 +97,33 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
             extra_global_modules: Additional top-level global modules
                 to elaborate (e.g. user-supplied ``glbl`` shims).
                 Forwarded to ``xelab`` after the design top.
+
+        ``sources=[...]`` may contain plain HDL paths, cocotb's
+        :class:`cocotb.runner.Verilog` / :class:`cocotb.runner.VHDL`
+        tagged paths, or
+        :class:`cocotb_vivado.vivado.VivadoSource` instances
+        (:class:`~cocotb_vivado.vivado.VivadoIp`,
+        :class:`~cocotb_vivado.vivado.VivadoProject`,
+        :class:`~cocotb_vivado.vivado.VivadoExportedSim`). The latter
+        self-orchestrate their Vivado-tool invocations and return
+        :class:`~cocotb_vivado.vivado.SimDirInfo` views the runner
+        consumes (``.prj`` files, ``-L`` libraries, glbl modules).
         """
         self.wave_format = self._resolve_wave_format(wave_format)
         self.extra_global_modules = list(extra_global_modules or [])
         if self.wave_format is not None:
             kwargs.setdefault("waves", True)
+
+        # cocotb's base build() calls get_abs_paths(sources) which only
+        # accepts os.PathLike. Strip VivadoSource instances out and stash
+        # them; _build_command handles them via self.vivado_sources below.
+        sources_in = kwargs.get("sources") or []
+        assert isinstance(sources_in, Sequence), (
+            f"sources= must be a sequence, got {type(sources_in).__name__}"
+        )
+        self.vivado_sources = [s for s in sources_in if isinstance(s, VivadoSource)]
+        kwargs["sources"] = [s for s in sources_in if not isinstance(s, VivadoSource)]
+
         super().build(*args, **kwargs)
 
     def test(
@@ -150,7 +181,14 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
 
         cmds: list[Command] = []
 
-        for source in (Path(src) for src in self.sources):
+        # Vivado-managed sources first: their .prepare() may run vivado batch
+        # and emit .prj files plus the elab script the runner reads for
+        # the precompiled-library set and glbl modules xelab needs.
+        for vivado_source in self.vivado_sources:
+            cmds.extend(self._consume_vivado_source(vivado_source))
+
+        for raw_source in self.sources:
+            source = Path(raw_source)
             if runner.is_verilog_source(source):
                 cmds.append(
                     self._compile_cmd(source, "verilog")
@@ -164,10 +202,27 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
             else:
                 raise ValueError(
                     f"Unknown file type: {source!s} cannot be compiled. "
-                    "IP / BD / XPR sources are not yet supported by this runner."
+                    "Use a cocotb_vivado.vivado.VivadoSource subclass for "
+                    "Vivado-managed sources (.xci, .bd, .xpr, exported TCL)."
                 )
 
         cmds.append(self._elab_command())
+        return cmds
+
+    def _consume_vivado_source(self, source: VivadoSource) -> list[Command]:
+        """Run a Vivado source's ``.prepare()`` and return its compile commands.
+
+        Side effects: extends ``self.xilinx_libraries`` and
+        ``self.elab_modules`` from the returned :class:`SimDirInfo`.
+        """
+        info = source.prepare(self.build_dir, self.hdl_library)
+        self.xilinx_libraries.update(info.libraries)
+        self.elab_modules.extend(info.glbl_modules)
+        cmds: list[Command] = []
+        if info.vlog_prj is not None:
+            cmds.append(self._compile_cmd(info.vlog_prj, "verilog", prj=True))
+        if info.vhdl_prj is not None:
+            cmds.append(self._compile_cmd(info.vhdl_prj, "vhdl", prj=True))
         return cmds
 
     def _test_command(self) -> Sequence[Command]:
@@ -216,10 +271,12 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
             "fst": self.build_dir / f"{base}.fst",
         }
 
-    def _compile_cmd(self, src_file: Path, language: str) -> Command:
+    def _compile_cmd(self, src_file: Path, language: str, prj: bool = False) -> Command:
         compiler = {"vhdl": "xvhdl", "verilog": "xvlog"}[language]
         cmd: Command = [compiler, "--incr", "--relax", "-work", self.hdl_library]
-        if language == "verilog" and src_file.suffix == ".sv":
+        if prj:
+            cmd.append("-prj")
+        elif language == "verilog" and src_file.suffix == ".sv":
             cmd.append("-sv")
         cmd.append(str(src_file.resolve()))
         if language == "verilog":
