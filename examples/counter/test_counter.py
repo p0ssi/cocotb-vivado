@@ -35,18 +35,21 @@ async def counter_increments(dut):
 
 def test_counter():
     here = Path(__file__).resolve().parent
+    build_dir = here / "sim_build"
     runner = get_runner(os.getenv("SIM", "vivado"))
     runner.build(
         sources=[here / "counter.v"],
         hdl_toplevel="counter",
-        always=True,
+        always=False,
         timescale=("1ns", "1ps"),
+        build_dir=str(build_dir),
     )
     runner.test(
         hdl_toplevel="counter",
         test_module="test_counter",
         hdl_toplevel_lang="verilog",
         testcase="counter_increments",
+        build_dir=str(build_dir),
     )
 
 

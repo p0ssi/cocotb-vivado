@@ -34,7 +34,7 @@ async def clocks_only(dut):
     await Timer(200, units="ns")
 
 
-def test_bram():
+def test_bram(build_dir):
     proj_path = Path(__file__).resolve().parent
     runner = get_runner(os.getenv("SIM", "vivado"))
     runner.build(
@@ -48,13 +48,16 @@ def test_bram():
         ],
         hdl_toplevel="bram_wrap",
         timescale=("1ns", "1ps"),
+        build_dir=str(build_dir),
     )
     runner.test(
         hdl_toplevel="bram_wrap",
         test_module="test_bram",
         hdl_toplevel_lang="verilog",
+        build_dir=str(build_dir),
     )
 
 
 if __name__ == "__main__":
-    test_bram()
+    _build_dir = Path(__file__).resolve().parent / "sim_build" / Path(__file__).stem
+    test_bram(_build_dir)

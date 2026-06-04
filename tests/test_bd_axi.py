@@ -91,7 +91,7 @@ async def bd_axi_test(dut):
     dut.areset.value = 0
 
 
-def test_bd_axi():
+def test_bd_axi(build_dir):
     proj_path = Path(__file__).resolve().parent
     runner = get_runner(os.getenv("SIM", "vivado"))
     bd = VivadoBd(
@@ -104,6 +104,7 @@ def test_bd_axi():
         hdl_toplevel=bd.top,
         hdl_library=bd.library,
         timescale=("1ns", "1ps"),
+        build_dir=str(build_dir),
     )
     runner.test(
         hdl_toplevel=bd.top,
@@ -111,8 +112,10 @@ def test_bd_axi():
         test_module="test_bd_axi",
         hdl_toplevel_lang="verilog",
         testcase="bd_axi_test",
+        build_dir=str(build_dir),
     )
 
 
 if __name__ == "__main__":
-    test_bd_axi()
+    _build_dir = Path(__file__).resolve().parent / "sim_build" / Path(__file__).stem
+    test_bd_axi(_build_dir)

@@ -54,6 +54,23 @@ Every other test runs unconditionally -- there are no opt-in gates, so a
 green `pytest tests/` means the whole suite really ran. Note `pytest
 tests/` does not cover `examples/`; run both.
 
+**Clearing the build cache after runner-code edits.** Tests default to
+`always=False`, so the Tier 1 build cache
+(`tests/sim_build/build_signature.json`) is active. The signature keys
+on build *inputs* (sources, kwargs, fingerprints, tool versions) — not
+on `runner.py` itself. After editing `src/cocotb_vivado/runner.py` or
+any pipeline-affecting module (`vivado/sources.py`, `vivado/_tcl.py`,
+…), clear `tests/sim_build/` before re-running:
+
+```bash
+rm -rf tests/sim_build && pytest tests/test_simple.py
+```
+
+Otherwise the cache hits on the stale snapshot, the modified code path
+skips xvlog/xvhdl/xelab, and the test passes against pre-edit
+artifacts. If you only changed tests or docs, the cache invalidates
+correctly on its own.
+
 ## Linting and type checking
 
 ```bash
