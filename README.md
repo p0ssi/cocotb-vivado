@@ -1,37 +1,63 @@
 # cocotb-vivado
+
 [![PyPI version](https://badge.fury.io/py/cocotb-vivado.svg)](https://pypi.org/project/cocotb-vivado/)
+[![lint](https://github.com/themperek/cocotb-vivado/actions/workflows/lint.yml/badge.svg)](https://github.com/themperek/cocotb-vivado/actions/workflows/lint.yml)
 
-A limited Python/[cocotb](https://github.com/cocotb/cocotb/) interface to the [Xilinx Vivado Simulator](https://docs.xilinx.com/v/u/en-US/dh0010-vivado-simulation-hub) simulator. 
+A Python/[cocotb](https://github.com/cocotb/cocotb/) interface to the
+[Xilinx Vivado Simulator](https://docs.xilinx.com/v/u/en-US/dh0010-vivado-simulation-hub).
+
 Based on [cocotb-stub-sim](https://github.com/fvutils/cocotb-stub-sim).
+The Python runner and the value-change manager are derived from
+[vicoco](https://github.com/kiran-vuksanaj/vicoco) by Kiran Vuksanaj.
 
 ---
 
-## 🚧 Project Status
-**Proof of Concept** – expect limitations (see below).  
+## Project status
 
-- Only top-level ports are accessible (simulator limitation).  
-- Edge-triggers `Edge`, `RisingEdge`, `FallingEdge` only work on clocks generated in the testbench/python with cocotb.clock.Clock() driver." (simulator limitation, see below).
-- Setting signal values is immediate (`setimmediatevalue` behavior).  
-- Only **Verilog top-levels** are supported (VHDL support planned).  
-- Direct access to the **XSI interface** is available.  
+**Active development.** The Python runner experience is being rebuilt.
+See [CHANGELOG.md](CHANGELOG.md) for what's landed and
+[MIGRATION.md](MIGRATION.md) for breaking changes.
 
----
+Known limitations:
+
+- Only top-level ports are accessible (XSI limitation).
+- Edge triggers (`Edge`, `RisingEdge`, `FallingEdge`) only fire on
+  clocks driven by `cocotb.clock.Clock()` in the testbench. Native
+  value-change callbacks are not supported by the XSI stub today;
+  the scheduler-driven stand-ins from
+  `cocotb_vivado.clock_scheduler` cover only Python-driven signals.
+- Setting signal values is immediate (`setimmediatevalue` behavior).
+- VHDL top-level support is in progress; today's release runs Verilog
+  tops cleanly and accepts VHDL sources.
+- Direct access to the **XSI interface** via `cocotb_vivado.xsi` is
+  available for low-level tooling.
+
+## Platform support
+
+**Linux only.** cocotb-vivado loads XSI shared libraries via ctypes;
+the XSI interface is Linux-specific.
+
+## Tested Vivado versions
+
+- Vivado **2023.1** — minimum supported.
+- Newer versions are expected to work but verify locally.
 
 ## Installation
 
 ```bash
-pip install cocotb-vivado==0.0.3 (for VIVADO <= 2022.2)
-pip install cocotb-vivado (for VIVADO >= 2023.1)
+pip install cocotb-vivado
 ```
 
 ## Quickstart
 
 ```python
-import subprocess
+from pathlib import Path
 
-import cocotb_vivado
 import cocotb
 from cocotb.triggers import Timer
+
+from cocotb_vivado.runner import get_runner
+
 
 @cocotb.test()
 async def simple_test(dut):
@@ -41,58 +67,111 @@ async def simple_test(dut):
     await Timer(10, units="ns")
     assert dut.out.value == 1
 
-def test_simple():
-    subprocess.run(["xvlog", "tb.v"])
-    subprocess.run(["xelab", "work.tb", "-dll"])
 
-    cocotb_vivado.run(module="test_simple", xsim_design="xsim.dir/work.tb/xsimk.so", top_level_lang="verilog")
+def test_simple():
+    runner = get_runner("vivado")
+    runner.build(
+        sources=[Path(__file__).parent / "tb.v"],
+        hdl_toplevel="tb",
+        always=True,
+        timescale=("1ns", "1ps"),
+    )
+    runner.test(
+        hdl_toplevel="tb",
+        test_module="test_simple",
+        hdl_toplevel_lang="verilog",
+        testcase="simple_test",
+    )
 ```
 
-See `testes/test_simple.py` for full example.
+See [`examples/`](examples/) for runnable projects and the `tests/`
+directory for more scenarios.
 
-## Usage
-
-See the `tests` folder for examples.
+Before running:
 
 ```bash
-source ../Vivado/202X.X/settings64.sh
-export LD_LIBRARY_PATH=$XILINX_VIVADO/lib/lnx64.o
-pytest -s
+source /path/to/Vivado/<version>/settings64.sh
+pytest -s tests/
 ```
 
-Extra feature: One does not need to recompile the project when running/changing tests .
+`xelab` / `xvlog` / `xvhdl` must be on `PATH` and `LD_LIBRARY_PATH`
+must be set (or `XILINX_VIVADO` set as a courtesy fallback so the
+runner can synthesize one for the test subprocess).
 
-## Direct `XSI` interface
+## Import order caveat
 
-You can use `XSI` interface directly see `tests/test_xsi.py` for an example.
+Importing `cocotb_vivado` has two global side effects:
 
-## Overcoming `XSI` limitations
+1. It replaces `cocotb.simulator` in `sys.modules` with the in-process
+   XSI stub.
+2. It replaces `cocotb.clock.Clock` and the
+   `cocotb.triggers.{RisingEdge, FallingEdge, Edge}` classes with
+   scheduler-driven polling stand-ins from
+   `cocotb_vivado.clock_scheduler`. The XSI stub does not support
+   value-change callbacks, so cocotb's native edge triggers cannot fire
+   — these stand-ins bridge the gap. A global `ClockScheduler`
+   singleton owns this state: patched `Clock` objects register
+   themselves with the scheduler, which drives the signals and
+   evaluates pending edge triggers on every clock-driven transition.
 
-`XSI` interface natively supports only `Timer` trigger.
+Consequence: **always import `cocotb_vivado` (or any `cocotb_vivado.*`
+submodule) before `cocotb`**.
 
-To allow for using edge triggers under this limitation, cocotb-vivado  provides its custom trigger mechanism. When `cocotb_vivado` is imported, a global ClockScheduler singleton is created. This scheduler replaces cocotb’s standard implementations of `Clock`, `Edge`, `RisingEdge`, and `FallingEdge`.
+```python
+# Correct
+import cocotb_vivado
+from cocotb_vivado.runner import get_runner
 
-The monkey‑patched Clock objects register themselves with the scheduler, which drives the associated signals and observes every resulting transition. On each clock‑driven edge, the scheduler evaluates all pending edge triggers and resumes any coroutines waiting on them. This polling‑on‑edge model gives deterministic behavior for multiple clocks while keeping the standard cocotb coroutine interface unchanged.
+import cocotb
+from cocotb.triggers import Timer
+from cocotb.clock import Clock
+```
+
+```python
+# Broken — cocotb caches the real simulator before our patch lands
+import cocotb
+import cocotb_vivado
+```
+
+Reference the patched triggers via the module path inside your test so
+the patch wins:
+
+```python
+@cocotb.test()
+async def t(dut):
+    await cocotb.triggers.RisingEdge(dut.clk)   # uses the patched class
+```
+
+`from cocotb.triggers import RisingEdge` followed by `RisingEdge(...)`
+binds the *original* class regardless of the patches, because Python
+resolves the name at import time.
+
+## Waveform output
+
+The `wave_format` kwarg on `runner.build()` / `runner.test()` selects
+the dump format:
+
+```python
+runner.build(..., wave_format="vcd")      # Verilog $dumpfile/$dumpvars
+runner.build(..., wave_format="fst")      # VCD post-processed by vcd2fst
+runner.build(..., wave_format="wdb")      # Vivado native, viewable in xsim --gui
+runner.build(...)                          # default: no waves
+```
+
+All formats land in `{build_dir}/{hdl_toplevel}.{ext}` for symmetry.
 
 ## cocotb extensions
 
-In order to use cocotb extension like [cocotbext-axi](https://github.com/alexforencich/cocotbext-axi) one needs to use `Clock` driver for clocking their DUT.
+Extensions like [cocotbext-axi](https://github.com/alexforencich/cocotbext-axi)
+work as long as the DUT is clocked by a Python-driven `Clock` — see
+the Import order caveat for why. AXI bus accesses are routed through
+the cocotb scheduler the extension expects.
 
-## Full Vivado design simulation
+## Contributing
 
-In order order to simulate full design you need create design, `export_simulation` files compile, elaborate and run. See `tests/fw.tcl` and `tests/test_fw.tcl` for an example.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Dump waveforms
+## Acknowledgment
 
-You can dump `vcd` file with verilog syntax in your testbench:
-
-```verilog
-initial begin
-    $dumpfile("test.vcd");
-    $dumpvars(0);
-end
-```
-
-### Acknowledgment
-
-We'd like to thank our employer, [Dectris](https://dectris.com/) for supporting this work.
+We'd like to thank our employer, [Dectris](https://dectris.com/) for
+supporting this work.
