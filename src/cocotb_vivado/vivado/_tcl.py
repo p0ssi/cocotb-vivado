@@ -1,6 +1,10 @@
 # Copyright cocotb-vivado contributors
+# Copyright 2026 Kiran Vuksanaj
 # Licensed under the Apache License 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
+#
+# execute_tcl is derived from vicoco's Vivado runner
+# (https://github.com/kiran-vuksanaj/vicoco).
 
 """Low-level helpers for invoking ``vivado -mode batch``.
 
