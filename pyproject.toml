@@ -1,0 +1,167 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cocotb-vivado"
+dynamic = ["version"]
+description = "Limited cocotb/Python interface for Xilinx Vivado Simulator"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Tomasz Hemperek", email = "themperek@gmail.com" },
+]
+keywords = ["SystemVerilog", "Verilog", "RTL", "cocotb", "Python", "Vivado", "Xilinx", "xsim", "xsi"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Framework :: cocotb",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "cocotb>=1.8,<2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/themperek/cocotb-vivado"
+
+[tool.setuptools_scm]
+# Version is derived from the latest git tag (e.g. ``v0.1.0``), so a
+# GitHub release/tag is the single source of truth. The resolved version
+# is written into the package at build time (``_version.py``) so built
+# wheels/sdists carry it without git; ``.git_archival.txt`` +
+# ``.gitattributes`` let a ``git archive`` tarball (what GitHub generates
+# for a release) carry it too. ``fallback_version`` keeps a git-less,
+# archive-less checkout from failing the build.
+version_file = "src/cocotb_vivado/_version.py"
+fallback_version = "0.0.0"
+# Only ``v``-prefixed release tags drive the version, so unrelated tags
+# (e.g. review checkpoints) are ignored.
+git_describe_command = [
+    "git", "describe", "--dirty", "--tags", "--long", "--match", "v[0-9]*",
+]
+
+[project.optional-dependencies]
+# Test-only dependencies. tests/test_axil.py, tests/test_bd_axi.py and
+# tests/test_fw.py drive the DUT with cocotbext-axi; without this extra a
+# fresh clone fails at collection, before any simulation runs.
+test = [
+    "cocotbext-axi",
+    "pytest",
+]
+dev = [
+    "cocotb-vivado[test]",
+    "ruff",
+    "mypy",
+    "pre-commit",
+]
+
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+extend-exclude = [
+    "venv",
+    ".venv*",
+    "build",
+    "dist",
+]
+target-version = "py39"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
+extend-select = [
+    "I",        # isort
+    "UP",       # pyupgrade
+    "PL",       # pylint
+    "E",        # pycodestyle errors
+    "W",        # pycodestyle warnings
+    "F",        # pyflakes
+    "C4",       # flake8-comprehension
+    "LOG",      # flake8-logging
+    "G",        # flake8-logging-format
+    "ISC",      # implicit string concat
+    "TC",       # flake8-typechecking
+    "SIM103",   # return the condition directly
+    "SIM300",   # yoda conditions
+    "RUF100",   # unused noqa
+    "RUF101",   # redirected noqa
+    "RUF010",   # explicit type conversion in f-string
+    "RUF005",   # collection literal concatenation
+    "RUF022",   # unsorted __all__
+    "PERF101",  # unnecessary list cast
+    "PERF102",  # unnecessary dict.items()
+    "B007",     # unused loop variable
+    "PYI030",   # unnecessary literal union
+]
+ignore = [
+    "E741",    # ambiguous variable name (preference)
+    "E501",    # line too long (preference)
+    "PLR0912", # Too many branches (>12) (preference)
+    "PLR0913", # Too many arguments to function call (>5) (preference)
+    "PLR0915", # Too many statements (>50) (preference)
+    "PLR2004", # Magic value used in comparison (preference)
+    "PLW0603", # Using the global statement (preference)
+    "PLR0911", # Too many return statements (preference)
+    "PLW1641", # __eq__ without __hash__ (mypy compatibility)
+    "TC001",   # typing-only first party import
+    "TC002",   # typing-only third party import
+    "TC003",   # typing-only standard library import
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cocotb_vivado"]
+
+[tool.ruff.lint.per-file-ignores]
+# Legacy run()-based tests. They keep their original bare subprocess
+# invocations and identity comparisons verbatim until they migrate to
+# the new runner.
+"tests/test_axil.py" = ["PLW1510", "F841"]
+"tests/test_fw.py" = ["PLW1510"]
+"tests/test_xsi.py" = ["PLW1510", "E712"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["cocotb_vivado"]
+mypy_path = "src/"
+disallow_untyped_defs = true
+disallow_any_unimported = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+implicit_reexport = false
+show_error_codes = true
+pretty = true
+allow_redefinition = true
+
+# Legacy modules pre-dating the runner-first refactor; cleaned up incrementally.
+[[tool.mypy.overrides]]
+module = [
+    "cocotb_vivado",
+    "cocotb_vivado.xsi",
+    "cocotb_vivado.mock_triggers",
+    "cocotb_vivado.clock_scheduler",
+    "cocotb_vivado.stub.*",
+]
+ignore_errors = true
+
+# cocotb has no public py.typed marker on the 1.x line we target.
+[[tool.mypy.overrides]]
+module = ["cocotb", "cocotb.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+markers = [
+    "in_process_xsi: dlopens xsimk.so in the pytest process; needs LD_LIBRARY_PATH exported before Python starts",
+]

@@ -30,12 +30,14 @@ def register_timed_callback(t, cb, ud):
     try:
         return Mgr.inst().register_timed_callback(t, cb, ud)
     except Exception as e:
-        print("Exception while registering timed callback: %s" % str(e))
+        print(f"Exception while registering timed callback: {e!s}")
         traceback.print_exc()
 
 
 def register_value_change_callback(*args, **kwargs):
-    raise Exception("cocotb-xsim: Setting cocotb value-change callbacks is not supported")
+    raise Exception(
+        "cocotb-xsim: Setting cocotb value-change callbacks is not supported"
+    )
 
 
 def register_readonly_callback(*args, **kwargs):

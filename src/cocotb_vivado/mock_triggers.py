@@ -7,15 +7,17 @@ Since we cannot directly trigger on HDL clock events in Vivado, all triggers
 shared timer, providing consistent timing behavior across the simulation.
 """
 
-import cocotb
 import warnings
+
+import cocotb
 
 warnings.warn(
     "mock_triggers is deprecated and will be removed in a future release; "
     "use cocotb.clock.Clock() driver instead.",
     DeprecationWarning,
-    stacklevel=2
+    stacklevel=2,
 )
+
 
 class TimerSingleton:
     """Singleton class that provides a single reusable Timer(100, "ns") instance."""
@@ -25,7 +27,7 @@ class TimerSingleton:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(TimerSingleton, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
         return cls._instance
 
     def set_timer(self, timer_set):
@@ -35,7 +37,9 @@ class TimerSingleton:
     def get_timer(self):
         """Get the timer instance, creating it if it doesn't exist."""
         if self._timer is None:
-            raise Exception("Timer not set. Use set_timer() to set a custom timer instance.")
+            raise Exception(
+                "Timer not set. Use set_timer() to set a custom timer instance."
+            )
         return self._timer
 
 
@@ -110,6 +114,7 @@ class OnSignal:
 cocotb.triggers.FallingEdge = OnFallingSignal
 cocotb.triggers.RisingEdge = OnRisingSignal
 cocotb.triggers.Edge = OnSignal
+
 
 async def clock(signal):
     signal.setimmediatevalue(0)

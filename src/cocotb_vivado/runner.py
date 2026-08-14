@@ -1,0 +1,324 @@
+# Copyright cocotb-vivado contributors
+# Copyright 2026 Kiran Vuksanaj
+# Licensed under the Apache License 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Derived from vicoco's Vivado runner (https://github.com/kiran-vuksanaj/vicoco),
+# restructured to delegate IP/BD/project handling to cocotb_vivado.vivado.
+
+"""Python runner subclass driving Vivado's XSim binaries.
+
+This module orchestrates XSim binary invocations only: ``xvlog``,
+``xvhdl``, and ``xelab``. The runner supports plain HDL sources;
+Vivado-managed sources (``.xci``, ``.bd``, ``.xpr``) are out of scope
+for this module.
+
+The contract for finding Vivado:
+
+* The XSim binaries must be on ``PATH`` (source ``settings64.sh``).
+* ``LD_LIBRARY_PATH`` must be set before the test subprocess runs.
+  If unset and ``XILINX_VIVADO`` is set, the runner synthesizes a
+  ``LD_LIBRARY_PATH`` from it as a courtesy fallback.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+from collections.abc import Mapping, Sequence
+from os import environ
+from pathlib import Path
+from typing import Literal, Union
+
+from cocotb import runner
+from cocotb.runner import VHDL, Simulator, Verilog
+
+PathLike = Union[Path, str]
+Command = list[str]
+Timescale = tuple
+
+WaveFormat = Literal["wdb", "vcd", "fst"]
+
+_FILE_DUMP_WAVES = """\
+{timescale_declaration}
+module cocotb_vivado_dump();
+  initial begin
+    $dumpfile("{waveform_filename}");
+    $dumpvars(0,{toplevel});
+  end
+endmodule
+"""
+
+
+class Vivado(Simulator):  # type: ignore[no-any-unimported]
+    """cocotb Python runner for the Vivado XSim simulator (XSI only)."""
+
+    supported_gpi_interfaces = {"verilog": ["xsi"], "vhdl": ["xsi"]}
+    LAUNCHING_MODULE = "cocotb_vivado"
+
+    def __init__(self) -> None:
+        self.extra_global_modules: list[str] = []
+        self.wave_format: WaveFormat | None = None
+        self.elab_modules: list[str] = []
+        self.xilinx_libraries: set = set()
+        self.snapshot_name: str = ""
+        self.wave_paths: dict = {}
+        self.log = logging.getLogger(__name__)
+        super().__init__()
+
+    def build(
+        self,
+        *args: object,
+        wave_format: WaveFormat | None = None,
+        extra_global_modules: Sequence[str] | None = None,
+        **kwargs: object,
+    ) -> None:
+        """Build the HDL design with the XSim binaries.
+
+        Accepts every kwarg of :meth:`cocotb.runner.Simulator.build`,
+        plus:
+
+        Args:
+            wave_format: Waveform format to emit. ``None`` disables
+                waves. ``"fst"`` post-processes the VCD into FST via
+                ``vcd2fst`` (auto-downgrades to ``"vcd"`` with a
+                warning when ``vcd2fst`` is missing). Setting this
+                forces ``waves=True`` for the base build step.
+            extra_global_modules: Additional top-level global modules
+                to elaborate (e.g. user-supplied ``glbl`` shims).
+                Forwarded to ``xelab`` after the design top.
+        """
+        self.wave_format = self._resolve_wave_format(wave_format)
+        self.extra_global_modules = list(extra_global_modules or [])
+        if self.wave_format is not None:
+            kwargs.setdefault("waves", True)
+        super().build(*args, **kwargs)
+
+    def test(
+        self,
+        *args: object,
+        wave_format: WaveFormat | None = None,
+        **kwargs: object,
+    ) -> None:
+        """Run the cocotb test. ``wave_format``: same semantics as in :meth:`build`."""
+        if wave_format is not None:
+            self.wave_format = self._resolve_wave_format(wave_format)
+            kwargs.setdefault("waves", True)
+        super().test(*args, **kwargs)
+        if not self.waves:
+            # XSI always writes a waveform DB on open (default name
+            # ``xsi.wdb``); with no waves requested it holds only the
+            # contentless design hierarchy. Drop it so build_dir keeps
+            # only real, traced captures — the ``<snapshot>.wdb`` a
+            # ``waves=True`` run produces.
+            (self.build_dir / "xsi.wdb").unlink(missing_ok=True)
+
+    # ------------------------------------------------------------------
+    # Simulator-binary contract
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _simulator_in_path() -> None:
+        """Verify XSim binaries are on ``PATH``."""
+        for exe in ("xelab", "xvlog", "xvhdl"):
+            if shutil.which(exe) is None:
+                raise SystemExit(
+                    f"ERROR: '{exe}' executable not found in PATH. "
+                    "Source your Vivado settings64.sh."
+                )
+
+    # ------------------------------------------------------------------
+    # Build / test command assembly
+    # ------------------------------------------------------------------
+
+    def _build_command(self) -> Sequence[Command]:
+        self._derive_snapshot_name()
+
+        verilog_build_args = [
+            str(arg) for arg in self.build_args if type(arg) in (str, Verilog)
+        ]
+        vhdl_build_args = [
+            str(arg) for arg in self.build_args if type(arg) in (str, VHDL)
+        ]
+        define_args = self._define_args()
+
+        if self.waves:
+            self._init_wave_paths()
+            if self.wave_format in ("vcd", "fst"):
+                self._write_wavedump_file()
+
+        cmds: list[Command] = []
+
+        for source in (Path(src) for src in self.sources):
+            if runner.is_verilog_source(source):
+                cmds.append(
+                    self._compile_cmd(source, "verilog")
+                    + define_args
+                    + verilog_build_args
+                )
+            elif runner.is_vhdl_source(source):
+                cmds.append(
+                    self._compile_cmd(source, "vhdl") + define_args + vhdl_build_args
+                )
+            else:
+                raise ValueError(
+                    f"Unknown file type: {source!s} cannot be compiled. "
+                    "IP / BD / XPR sources are not yet supported by this runner."
+                )
+
+        cmds.append(self._elab_command())
+        return cmds
+
+    def _test_command(self) -> Sequence[Command]:
+        if self.waves and self.hdl_toplevel_lang == "vhdl":
+            self.log.warning(
+                "Waveform dump via $dumpfile/$dumpvars is not reachable on a "
+                "VHDL top. Only the Vivado WDB output is available."
+            )
+
+        cmd: list[Command] = [["python3", "-m", self.LAUNCHING_MODULE]]
+
+        self._populate_test_env()
+
+        if self.waves and self.wave_format == "fst":
+            vcd_path = self.wave_paths.get("vcd")
+            fst_path = self.wave_paths.get("fst")
+            if vcd_path is not None and fst_path is not None:
+                cmd.append(["vcd2fst", str(vcd_path), str(fst_path)])
+
+        return cmd
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_wave_format(self, wave_format: WaveFormat | None) -> WaveFormat | None:
+        if wave_format is None:
+            return None
+        if wave_format == "fst" and shutil.which("vcd2fst") is None:
+            self.log.warning(
+                "wave_format='fst' requested but 'vcd2fst' is not on PATH "
+                "(install gtkwave). Falling back to wave_format='vcd'."
+            )
+            return "vcd"
+        return wave_format
+
+    def _derive_snapshot_name(self) -> None:
+        top = self.hdl_toplevel or "top"
+        self.snapshot_name = top.split(".")[-1]
+
+    def _init_wave_paths(self) -> None:
+        base = self.snapshot_name
+        self.wave_paths = {
+            "wdb": self.build_dir / f"{base}.wdb",
+            "vcd": self.build_dir / f"{base}.vcd",
+            "fst": self.build_dir / f"{base}.fst",
+        }
+
+    def _compile_cmd(self, src_file: Path, language: str) -> Command:
+        compiler = {"vhdl": "xvhdl", "verilog": "xvlog"}[language]
+        cmd: Command = [compiler, "--incr", "--relax", "-work", self.hdl_library]
+        if language == "verilog" and src_file.suffix == ".sv":
+            cmd.append("-sv")
+        cmd.append(str(src_file.resolve()))
+        if language == "verilog":
+            cmd += self._get_include_options(self.includes)
+        return cmd
+
+    def _elab_command(self) -> Command:
+        toplevel = self.hdl_toplevel or ""
+        if "." not in toplevel:
+            toplevel = f"{self.hdl_library}.{toplevel}"
+
+        elab_args: Command = [
+            "xelab",
+            "-top",
+            toplevel,
+            "-snapshot",
+            self.snapshot_name,
+            *self._get_include_options(self.includes),
+            *self._define_args(),
+            *self._get_parameter_options(self.parameters),
+        ]
+
+        elab_args.extend(self.elab_modules)
+        elab_args.extend(self.extra_global_modules)
+
+        for library_name in sorted(self.xilinx_libraries):
+            elab_args.extend(["-L", library_name])
+
+        elab_args.extend(["-dll", "-debug", "wave"])
+
+        return elab_args
+
+    def _define_args(self) -> Command:
+        out: Command = []
+        for key, val in self.defines.items():
+            out.extend(["-d", f"{key}={val}"])
+        return out
+
+    def _get_parameter_options(self, parameters: Mapping[str, object]) -> Command:
+        out: Command = []
+        for name, value in parameters.items():
+            out.extend(["-generic_top", f"{name}={value}"])
+        return out
+
+    @staticmethod
+    def _get_include_options(includes: Sequence[Path]) -> Command:
+        out: Command = []
+        for incl in includes:
+            out.extend(["-i", str(incl)])
+        return out
+
+    def _write_wavedump_file(self) -> None:
+        """Inject a Verilog module that calls ``$dumpfile``/``$dumpvars``."""
+        toplevel = self.snapshot_name
+        vcd_path = self.wave_paths["vcd"]
+        timescale_declaration = ""
+        if self.timescale is not None:
+            stepsize, precision = self.timescale
+            timescale_declaration = f"`timescale {stepsize} / {precision}"
+
+        text = _FILE_DUMP_WAVES.format(
+            waveform_filename=str(vcd_path),
+            toplevel=toplevel,
+            timescale_declaration=timescale_declaration,
+        )
+        dump_path = self.build_dir / "cocotb_vivado_dump.v"
+        dump_path.write_text(text, encoding="utf-8")
+
+        self.elab_modules.append(f"{self.hdl_library}.cocotb_vivado_dump")
+        self.sources.append(dump_path)
+
+    def _populate_test_env(self) -> None:
+        """Stage env vars the cocotb subprocess relies on."""
+        self.env["VIVADO_SNAPSHOT_NAME"] = self.snapshot_name
+        self.env["TOPLEVEL_LANG"] = self.hdl_toplevel_lang or "verilog"
+        if self.waves:
+            wdb = self.wave_paths.get("wdb")
+            if wdb is not None:
+                self.env["VIVADO_WDB_FILE"] = str(wdb)
+
+        if "LD_LIBRARY_PATH" not in os.environ:
+            xilinx_root = environ.get("XILINX_VIVADO")
+            if xilinx_root is None:
+                raise SystemExit(
+                    "ERROR: LD_LIBRARY_PATH is not set and XILINX_VIVADO is not "
+                    "set as a fallback. Source your Vivado settings64.sh so the "
+                    "XSI shared libraries can be loaded."
+                )
+            self.env["LD_LIBRARY_PATH"] = (
+                f"{xilinx_root}/lib/lnx64.o:{xilinx_root}/lib/lnx64.o/Default"
+            )
+
+
+def get_runner(simulator_name: str, **kwargs: object) -> Simulator:  # type: ignore[no-any-unimported]
+    """``get_runner`` shim that returns the Vivado runner for ``"vivado"``.
+
+    Delegates to :func:`cocotb.runner.get_runner` for any other name so
+    the same factory works for projects that mix simulators.
+    """
+    if simulator_name == "vivado":
+        return Vivado(**kwargs)
+    return runner.get_runner(simulator_name)

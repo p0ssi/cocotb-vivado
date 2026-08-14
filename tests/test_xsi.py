@@ -1,9 +1,14 @@
-import subprocess
 import os
 import pathlib
-from cocotb_vivado import xsi
 import random
 import shutil
+import subprocess
+
+import pytest
+
+from cocotb_vivado import xsi
+
+pytestmark = pytest.mark.in_process_xsi
 
 
 def test_xsi():

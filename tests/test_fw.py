@@ -1,15 +1,29 @@
-from cocotb_vivado import run
-import subprocess
 import os
 import pathlib
 import shutil
+import subprocess
 
 import cocotb
-from cocotb.triggers import Timer
+import pytest
 from cocotb.clock import Clock
+from cocotb.triggers import Timer
+from cocotbext.axi import (
+    AxiLiteBus,
+    AxiLiteMaster,
+    AxiStreamBus,
+    AxiStreamSink,
+    AxiStreamSource,
+)
 
-from cocotbext.axi import AxiLiteBus, AxiLiteMaster
-from cocotbext.axi import AxiStreamSink, AxiStreamSource, AxiStreamBus
+from cocotb_vivado import run
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("COCOTB_VIVADO_TEST_DIRECT"),
+    reason=(
+        "Legacy cocotb_vivado.run()-based test with IP/BD dependencies. "
+        "Set COCOTB_VIVADO_TEST_DIRECT=1 to run."
+    ),
+)
 
 
 async def reset(signal, timer):
@@ -27,9 +41,15 @@ async def cocotb_fw_test(dut):
 
     cocotb.start_soon(reset(dut.areset, Timer(520, "ns")))
 
-    axil_master = AxiLiteMaster(AxiLiteBus.from_prefix(dut, "S_AXI"), dut.aclk, dut.areset)
-    axis_rx = AxiStreamSource(AxiStreamBus.from_prefix(dut, "AXIS_RX"), dut.aclk, dut.areset)
-    axis_tx = AxiStreamSink(AxiStreamBus.from_prefix(dut, "AXIS_TX"), dut.aclk, dut.areset)
+    axil_master = AxiLiteMaster(
+        AxiLiteBus.from_prefix(dut, "S_AXI"), dut.aclk, dut.areset
+    )
+    axis_rx = AxiStreamSource(
+        AxiStreamBus.from_prefix(dut, "AXIS_RX"), dut.aclk, dut.areset
+    )
+    axis_tx = AxiStreamSink(
+        AxiStreamBus.from_prefix(dut, "AXIS_TX"), dut.aclk, dut.areset
+    )
 
     data_in = list(range(32))
     await axil_master.write(0x10, data_in)
@@ -39,8 +59,6 @@ async def cocotb_fw_test(dut):
     print(data_out)
 
     assert data_in == data_out
-
-    #
 
     rx_data_send = []
     for i in range(4):
@@ -59,10 +77,10 @@ async def cocotb_fw_test(dut):
 
     assert rx_data == rx_data_send
 
-    #
-
     for i in range(8):
-        await axil_master.write(AXIS_FIFO_BASEADDR + 0x10, list(range(i * 4, i * 4 + 4)))
+        await axil_master.write(
+            AXIS_FIFO_BASEADDR + 0x10, list(range(i * 4, i * 4 + 4))
+        )
         await axil_master.wait()
 
     await axil_master.write(AXIS_FIFO_BASEADDR + 0x14, [0x20, 0, 0, 0])
@@ -75,12 +93,15 @@ async def cocotb_fw_test(dut):
 
     dut.areset.value = 0
 
+
 def test_fw():
     src_path = pathlib.Path(__file__).parent.absolute()
 
     shutil.rmtree("fw", ignore_errors=True)
     if not os.path.exists("fw/fw.xpr"):
-        subprocess.run(["vivado", "-nolog", "-mode", "tcl", "-source", src_path / "fw.tcl"])
+        subprocess.run(
+            ["vivado", "-nolog", "-mode", "tcl", "-source", src_path / "fw.tcl"]
+        )
 
     shutil.rmtree("xsim.dir", ignore_errors=True)
     if not os.path.exists("xsim.dir/fw_wrapper/xsimk.so"):
@@ -88,8 +109,11 @@ def test_fw():
         subprocess.run(["xvhdl", "-prj", f"{src_path}/fw/sim_export/xsim/vhdl.prj"])
         subprocess.run(["./fw/sim_export/xsim/fw_wrapper.sh", "-step", "elaborate"])
 
-    run(module="test_fw", xsim_design="xsim.dir/fw_wrapper/xsimk.so", top_level_lang="verilog")
-
+    run(
+        module="test_fw",
+        xsim_design="xsim.dir/fw_wrapper/xsimk.so",
+        top_level_lang="verilog",
+    )
 
 
 if __name__ == "__main__":
