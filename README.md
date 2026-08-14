@@ -34,8 +34,11 @@ Known limitations:
 
 ## Platform support
 
-**Linux only.** cocotb-vivado loads XSI shared libraries via ctypes;
-the XSI interface is Linux-specific.
+**Linux only.** The loader is Linux-specific — cocotb-vivado `dlopen`s
+the XSim snapshot (`xsimk.so`) via `ctypes` and derives an
+`LD_LIBRARY_PATH` from Vivado's `lib/lnx64.o`. XSI itself is not
+Linux-specific (Vivado's XSim and the XSI C API ship on Windows too), so
+a Windows port is plausible, but it is untested.
 
 ## Tested Vivado versions
 
@@ -98,53 +101,25 @@ pytest -s tests/
 must be set (or `XILINX_VIVADO` set as a courtesy fallback so the
 runner can synthesize one for the test subprocess).
 
-## Import order caveat
+## How the GPI shim is installed
 
-Importing `cocotb_vivado` has two global side effects:
+Importing `cocotb_vivado` replaces `cocotb.simulator` in `sys.modules`
+with the in-process XSI stub, and cocotb caches the simulator handle at
+its own import time — so the stub has to be installed before cocotb is
+imported.
 
-1. It replaces `cocotb.simulator` in `sys.modules` with the in-process
-   XSI stub.
-2. It replaces `cocotb.clock.Clock` and the
-   `cocotb.triggers.{RisingEdge, FallingEdge, Edge}` classes with
-   scheduler-driven polling stand-ins from
-   `cocotb_vivado.clock_scheduler`. The XSI stub does not support
-   value-change callbacks, so cocotb's native edge triggers cannot fire
-   — these stand-ins bridge the gap. A global `ClockScheduler`
-   singleton owns this state: patched `Clock` objects register
-   themselves with the scheduler, which drives the signals and
-   evaluates pending edge triggers on every clock-driven transition.
-
-Consequence: **always import `cocotb_vivado` (or any `cocotb_vivado.*`
-submodule) before `cocotb`**.
+**This is handled for you and imposes no rule on your testbench.**
+`runner.test()` spawns `python -m cocotb_vivado`, which installs the stub
+before importing cocotb; cocotb then loads your test module. Import
+`cocotb` and `cocotb_vivado` in whatever order your formatter prefers:
 
 ```python
-# Correct
-import cocotb_vivado
-from cocotb_vivado.runner import get_runner
-
 import cocotb
-from cocotb.triggers import Timer
 from cocotb.clock import Clock
+from cocotb.triggers import RisingEdge, Timer
+
+from cocotb_vivado.runner import get_runner
 ```
-
-```python
-# Broken — cocotb caches the real simulator before our patch lands
-import cocotb
-import cocotb_vivado
-```
-
-Reference the patched triggers via the module path inside your test so
-the patch wins:
-
-```python
-@cocotb.test()
-async def t(dut):
-    await cocotb.triggers.RisingEdge(dut.clk)   # uses the patched class
-```
-
-`from cocotb.triggers import RisingEdge` followed by `RisingEdge(...)`
-binds the *original* class regardless of the patches, because Python
-resolves the name at import time.
 
 ## Waveform output
 
@@ -274,8 +249,8 @@ via a full `VivadoProject`.
 ## cocotb extensions
 
 Extensions like [cocotbext-axi](https://github.com/alexforencich/cocotbext-axi)
-work as long as the DUT is clocked by a Python-driven `Clock` — see
-the Import order caveat for why. AXI bus accesses are routed through
+work as long as the DUT is clocked by a Python-driven `Clock` (XSI
+exposes no native GPI clock). AXI bus accesses are routed through
 the cocotb scheduler the extension expects.
 
 ## Contributing
