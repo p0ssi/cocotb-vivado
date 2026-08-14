@@ -19,7 +19,10 @@ jobs:
       - name: Install dev dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy
+          # Pin the linters: an unpinned ``pip install ruff`` tracks the
+          # latest release, which promotes new rules and breaks CI on a
+          # tree that was clean the day before. Bump these deliberately.
+          pip install ruff==0.15.15 mypy==2.1.0
           pip install -e .
 
       - name: Ruff check
