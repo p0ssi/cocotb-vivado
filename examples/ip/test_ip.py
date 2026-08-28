@@ -5,11 +5,12 @@
 # The clocks_only test is adopted from vicoco's test/sim/test_bram.py
 # (https://github.com/kiran-vuksanaj/vicoco).
 
-"""Block-RAM IP example: a ``blk_mem_gen`` instance wrapped by ``bram_wrap.sv``.
+"""Vivado IP example: a ``blk_mem_gen`` instance wrapped by ``bram_wrap.sv``.
 
-Exercises ``VivadoIp`` end-to-end. The XCI is *generated* by the
-``builder_tcl`` hook on first build — the test fixture is the TCL
-recipe, not a committed Vivado-version-locked XCI.
+Shows ``VivadoIp`` end to end. The XCI is *generated* by the
+``builder_tcl`` hook (``ip/blk_mem_kilobyte/regen.tcl``) on first build,
+so this example carries no Vivado-version-locked XCI — it works on any
+Vivado that has the ``blk_mem_gen`` IP.
 """
 
 import os
@@ -34,27 +35,27 @@ async def clocks_only(dut):
     await Timer(200, units="ns")
 
 
-def test_bram():
-    proj_path = Path(__file__).resolve().parent
+def test_ip():
+    here = Path(__file__).resolve().parent
     runner = get_runner(os.getenv("SIM", "vivado"))
     runner.build(
         sources=[
             VivadoIp(
                 "ip/blk_mem_kilobyte/blk_mem_kilobyte.xci",
-                builder_tcl=proj_path / "ip" / "blk_mem_kilobyte" / "regen.tcl",
+                builder_tcl=here / "ip" / "blk_mem_kilobyte" / "regen.tcl",
                 part_num="xczu7eg-ffvc1156-2-e",
             ),
-            proj_path / "bram_wrap.sv",
+            here / "bram_wrap.sv",
         ],
         hdl_toplevel="bram_wrap",
         timescale=("1ns", "1ps"),
     )
     runner.test(
         hdl_toplevel="bram_wrap",
-        test_module="test_bram",
+        test_module="test_ip",
         hdl_toplevel_lang="verilog",
     )
 
 
 if __name__ == "__main__":
-    test_bram()
+    test_ip()
