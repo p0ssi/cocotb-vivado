@@ -58,8 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cocotb_vivado.__main__` — subprocess entry point that
   `runner.test()` spawns via `python -m cocotb_vivado`. Reads the
   snapshot name and optional WDB output path from environment.
+- `cocotb_vivado.stub.manager` + `cocotb_vivado.stub.handles` — a
+  value-change manager that emulates cocotb's edge / read-write /
+  read-only callbacks by re-reading top-level signals after each XSI
+  kernel step (XSI has no native value-change callback registration),
+  so cocotb's stock `RisingEdge` / `FallingEdge` / `Edge` triggers work
+  on any signal, not just Python-driven `Clock`s. Split out of the
+  former `stub.mgr`.
 - `wdb_file` kwarg threaded through `xsi.XSI.__init__` and
-  `stub.mgr.Mgr.init`, so the WDB output path can be set explicitly
+  `stub.manager.Mgr.init`, so the WDB output path can be set explicitly
   by the runner instead of defaulting to `xsi.wdb` in the cwd.
 - `pyproject.toml` mirroring cocotb upstream's lint and type
   configuration (ruff with the same extend-select / ignore set, mypy
@@ -87,6 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Edge triggers now observe same-timestep value deposits.** The
+  value-change manager samples signals *after* cocotb applies its
+  scheduled writes, so a signal written in the same timestep as a clock
+  edge is visible to that edge — matching a real simulator (verified
+  against nvc). The previous polling scheduler sampled the *stale*
+  value, so a testbench that releases reset exactly on a clock edge now
+  counts one cycle later. See [MIGRATION.md](MIGRATION.md).
 - `tests/test_simple.py` and `tests/test_tb.py` rewritten on top of
   `cocotb_vivado.runner.get_runner()`. Their legacy
   `cocotb_vivado.run()`-based variants stay available but are
@@ -105,3 +119,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   smoke test rather than a runner-based simulation.
 - `setup.py` reduced to a thin shim; project metadata moved to the
   `[project]` table in `pyproject.toml`.
+
+### Removed
+
+- `cocotb_vivado.clock_scheduler` and `cocotb_vivado.mock_triggers` —
+  the Timer-polled `Clock` / edge-trigger stand-ins that emulated
+  callbacks before the value-change manager. The manager now drives
+  cocotb's native triggers directly, so the stand-ins (and the rule
+  that only Python-driven `Clock`s could raise edges) are gone.

@@ -98,11 +98,12 @@ Reasonable question to ask once. The short answer:
   kernel API with no value-change callback registration. `xelab` has
   no `-loadvpi` equivalent. It's an architectural mismatch, not a
   missing-feature gap.
-- **The XSI workarounds don't generalize.** `clock_scheduler.py`'s
-  Timer-polled edge triggers, the `sys.modules["cocotb.simulator"]`
-  patch, and the `python -m cocotb_vivado` subprocess pattern exist
-  *because* XSI can't deliver callbacks. They're a XSim-shaped crutch
-  with no reuse in any other simulator context.
+- **The XSI workarounds don't generalize.** The value-change
+  manager's post-step signal re-reads (emulating callbacks XSI won't
+  deliver), the `sys.modules["cocotb.simulator"]` patch, and the
+  `python -m cocotb_vivado` subprocess pattern exist *because* XSI has
+  no native value-change callback registration. They're a XSim-shaped
+  crutch with no reuse in any other simulator context.
 - **Vivado tool integration (TCL, IP regeneration, project export)
   is vendor-specific** and doesn't belong in cocotb core.
 - **No community signal.** No issues in the cocotb/cocotb repo
