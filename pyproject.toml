@@ -141,13 +141,12 @@ show_error_codes = true
 pretty = true
 allow_redefinition = true
 
-# Legacy modules pre-dating the runner-first refactor; cleaned up incrementally.
+# Modules with relaxed type checking — the XSI shim and ctypes layers
+# rely on dynamic dispatch that mypy's strict mode can't follow cleanly.
 [[tool.mypy.overrides]]
 module = [
     "cocotb_vivado",
     "cocotb_vivado.xsi",
-    "cocotb_vivado.mock_triggers",
-    "cocotb_vivado.clock_scheduler",
     "cocotb_vivado.stub.*",
 ]
 ignore_errors = true

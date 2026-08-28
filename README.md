@@ -21,12 +21,6 @@ See [CHANGELOG.md](CHANGELOG.md) for what's landed and
 Known limitations:
 
 - Only top-level ports are accessible (XSI limitation).
-- Edge triggers (`Edge`, `RisingEdge`, `FallingEdge`) only fire on
-  clocks driven by `cocotb.clock.Clock()` in the testbench. Native
-  value-change callbacks are not supported by the XSI stub today;
-  the scheduler-driven stand-ins from
-  `cocotb_vivado.clock_scheduler` cover only Python-driven signals.
-- Setting signal values is immediate (`setimmediatevalue` behavior).
 - VHDL top-level support is in progress; today's release runs Verilog
   tops cleanly and accepts VHDL sources.
 - Direct access to the **XSI interface** via `cocotb_vivado.xsi` is

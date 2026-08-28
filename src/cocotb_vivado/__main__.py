@@ -30,7 +30,7 @@ sys.modules["cocotb.simulator"] = importlib.import_module(
 
 import cocotb  # noqa: E402
 
-from .stub.mgr import Mgr  # noqa: E402
+from .stub.manager import Mgr  # noqa: E402
 
 
 def _initialize_simulator(
