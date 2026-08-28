@@ -137,6 +137,22 @@ Each source class self-orchestrates:
   the catch-all for TCL scripts that drive their own
   `launch_simulation -scripts_only` extraction.
 
+## Edge triggers now see same-timestep deposits
+
+The value-change manager behind edge / read-write / read-only callbacks
+changed one observable behavior versus the older polling scheduler: a
+signal written in the *same* timestep as a clock edge is now visible to
+that edge — as in a real simulator (cocotb applies coroutine deposits
+before the simulator evaluates the timestep). The old scheduler sampled
+the *stale* value.
+
+Concretely, a testbench that releases reset *exactly* on a clock edge
+now counts one cycle later than before. If a test that used to pass
+starts counting one cycle early, that is why: the old behavior was
+wrong. Release reset *between* edges, or expect the extra cycle —
+`examples/counter` was corrected this way (verified against nvc with
+stock cocotb).
+
 The runner consumes each source's `xsim/` directory uniformly:
 discovers per-language `.prj` files by content sniff and parses the
 `xelab` invocation in the sibling `*.sh` script for the precompiled-
