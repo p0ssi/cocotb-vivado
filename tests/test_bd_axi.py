@@ -1,9 +1,15 @@
-"""Block-diagram IP example: AXIS FIFO + AXI-Lite via cocotbext-axi.
+"""Interface block-design example: AXIS FIFO + AXI-Lite via ``VivadoBd``.
 
-``fw.tcl`` builds a Zynq UltraScale+ project. ``VivadoProject``
-runs it on first call and then extracts simulation scripts via
-``launch_simulation -scripts_only`` — exercising the project-build
-hook end-to-end.
+``ip/bd_axi/regen.tcl`` builds a block design whose top is built from
+``create_bd_intf_port`` (AXI-Lite ``S_AXI`` + AXIS ``AXIS_RX`` /
+``AXIS_TX``). ``VivadoBd`` ingests the ``.bd`` directly: it generates
+the RTL wrapper (``make_wrapper -top``) that flattens those interface
+bundles into discrete scalar ports, then extracts the simulation
+scripts. The flattened ports (``dut.S_AXI_*``, ``dut.AXIS_RX_*``, ...)
+are what ``cocotbext-axi`` binds to.
+
+Same DUT shape as ``test_fw.py``, but driven from a bare ``.bd`` via
+``VivadoBd`` rather than a full ``.xpr`` project via ``VivadoProject``.
 """
 
 import os
@@ -21,7 +27,7 @@ from cocotbext.axi import (
 )
 
 from cocotb_vivado.runner import get_runner
-from cocotb_vivado.vivado import VivadoProject
+from cocotb_vivado.vivado import VivadoBd
 
 
 async def reset(signal, timer):
@@ -31,7 +37,7 @@ async def reset(signal, timer):
 
 
 @cocotb.test()
-async def cocotb_fw_test(dut):
+async def bd_axi_test(dut):
     AXIS_FIFO_BASEADDR = 0x1000
 
     clk = Clock(dut.aclk, 200, units="ns")
@@ -85,29 +91,28 @@ async def cocotb_fw_test(dut):
     dut.areset.value = 0
 
 
-def test_fw():
+def test_bd_axi():
     proj_path = Path(__file__).resolve().parent
     runner = get_runner(os.getenv("SIM", "vivado"))
+    bd = VivadoBd(
+        "ip/bd_axi/bd_axi.bd",
+        builder_tcl=proj_path / "ip" / "bd_axi" / "regen.tcl",
+        part_num="xczu7eg-ffvc1156-2-e",
+    )
     runner.build(
-        sources=[
-            VivadoProject(
-                xpr_path="fw/fw.xpr",
-                builder_tcl=proj_path / "fw.tcl",
-            ),
-        ],
-        hdl_toplevel="fw_wrapper",
-        hdl_library="xil_defaultlib",
-        always=True,
+        sources=[bd],
+        hdl_toplevel=bd.top,
+        hdl_library=bd.library,
         timescale=("1ns", "1ps"),
     )
     runner.test(
-        hdl_toplevel="fw_wrapper",
-        hdl_toplevel_library="xil_defaultlib",
-        test_module="test_fw",
+        hdl_toplevel=bd.top,
+        hdl_toplevel_library=bd.library,
+        test_module="test_bd_axi",
         hdl_toplevel_lang="verilog",
-        testcase="cocotb_fw_test",
+        testcase="bd_axi_test",
     )
 
 
 if __name__ == "__main__":
-    test_fw()
+    test_bd_axi()

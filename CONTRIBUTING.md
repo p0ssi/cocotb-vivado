@@ -50,10 +50,9 @@ dynamic loader captures its search path at exec time. The test skips
 itself with an explanatory message when the XSI kernel library is not
 loadable, so a missing `LD_LIBRARY_PATH` is a skip, not a failure.
 
-`tests/test_fw.py` still exercises the legacy `cocotb_vivado.run()` path
-and is skipped by default pending its migration to the runner; set
-`COCOTB_VIVADO_TEST_DIRECT=1` to run it. Everything else runs
-unconditionally.
+Every other test runs unconditionally -- there are no opt-in gates, so a
+green `pytest tests/` means the whole suite really ran. Note `pytest
+tests/` does not cover `examples/`; run both.
 
 ## Linting and type checking
 
@@ -66,13 +65,27 @@ mypy src/
 `pre-commit run --all-files` runs all of the above plus the basic
 whitespace / line-ending hooks.
 
-## Architectural rule
+## Architectural rules
 
-**`cocotb_vivado.runner` invokes only the XSim binaries** (`xelab` /
-`xvlog` / `xvhdl`). The full `vivado` tool is not invoked from this
-module — that surface (TCL execution, IP regeneration, project export,
-part discovery) belongs to a separate module introduced in a follow-up
-PR alongside support for Vivado-managed sources (`.xci`, `.bd`, `.xpr`).
+Two rules govern where code goes. Both are enforceable by `grep` during
+review.
+
+1. **`cocotb_vivado.vivado` is the home for anything that
+   invokes the `vivado` binary** (the full tool, not the small XSim
+   binaries). If you're adding a `subprocess.run([..., 'vivado', ...])`
+   call, it belongs in `vivado.py`, not in `runner.py`.
+2. **`cocotb_vivado.runner` invokes only the XSim binaries**
+   (`xelab` / `xvlog` / `xvhdl`). When Vivado-the-tool work is required
+   (TCL execution, IP regeneration, project export, part discovery),
+   the runner delegates to `vivado`.
+
+For Vivado-managed sources (`.xci`, `.bd`, `.xpr`), Vivado-emitted
+`.prj` files (consumed via `xvlog -prj` / `xvhdl -prj`) plus the
+sibling `*.sh` xelab script are the canonical interface between
+`vivado` and `runner`. Producers live in `vivado` (each
+`VivadoSource.prepare()` runs the appropriate `vivado -mode batch`
+invocation that produces them); the parser and consumer live in
+`vivado.sim_dir` and `runner` respectively.
 
 ## Why a separate package, not upstream cocotb
 

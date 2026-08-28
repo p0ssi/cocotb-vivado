@@ -8,7 +8,7 @@ demonstrates.
 |---------|-------|
 | [counter](counter/)       | Minimal "hello world": runner build + test of a synchronous counter |
 | [parameters](parameters/) | Sweep a top-level Verilog parameter via `runner.build(parameters=...)` |
-| [ip](ip/)                 | IP / BD / XPR (placeholder for the upcoming runner-based IP scenario) |
+| [ip](ip/)                 | Instantiate a Vivado IP (`blk_mem_gen`) via `VivadoIp`, regenerated on first build |
 
 All examples assume the Vivado environment is sourced (`xelab` /
 `xvlog` / `xvhdl` on `PATH`, `LD_LIBRARY_PATH` set):

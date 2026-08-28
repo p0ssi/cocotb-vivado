@@ -1,21 +1,18 @@
+"""AXI-Lite RTL test exercising cocotbext-axi with the Python runner."""
+
 import os
-import pathlib
-import shutil
-import subprocess
+from pathlib import Path
 
 import cocotb
-import pytest
 from cocotb.clock import Clock
 from cocotb.triggers import Timer
 from cocotbext.axi import AxiLiteBus, AxiLiteMaster, AxiLiteRam
 
-import cocotb_vivado
-import cocotb_vivado.mock_triggers
+from cocotb_vivado.runner import get_runner
 
 
 @cocotb.test()
 async def cocotb_axil_test(dut):
-
     clk = Clock(dut.clk, 200, units="ns")
     cocotb.start_soon(clk.start())
 
@@ -27,7 +24,6 @@ async def cocotb_axil_test(dut):
     AxiLiteRam(AxiLiteBus.from_prefix(dut, "axil"), dut.clk, dut.rst, size=2**16)
 
     data_in = list(range(16))
-
     await axil_master.write(0, data_in)
 
     data_out = []
@@ -39,20 +35,20 @@ async def cocotb_axil_test(dut):
     assert data_in == data_out
 
 
-@pytest.mark.in_process_xsi
 def test_axil():
-    src_path = pathlib.Path(__file__).parent.absolute()
-
-    shutil.rmtree("xsim.dir", ignore_errors=True)
-
-    if not os.path.exists("xsim.dir/work.test_axil/xsimk.so"):
-        subprocess.run(["xvlog", src_path / "test_axil.v"])
-        subprocess.run(["xelab", "work.test_axil", "-dll"])
-
-    cocotb_vivado.run(
-        module="test_axil",
-        xsim_design="xsim.dir/work.test_axil/xsimk.so",
-        top_level_lang="verilog",
+    proj_path = Path(__file__).resolve().parent
+    runner = get_runner(os.getenv("SIM", "vivado"))
+    runner.build(
+        sources=[proj_path / "test_axil.v"],
+        hdl_toplevel="test_axil",
+        always=True,
+        timescale=("1ns", "1ps"),
+    )
+    runner.test(
+        hdl_toplevel="test_axil",
+        test_module="test_axil",
+        hdl_toplevel_lang="verilog",
+        testcase="cocotb_axil_test",
     )
 
 

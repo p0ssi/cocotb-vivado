@@ -121,11 +121,8 @@ ignore = [
 known-first-party = ["cocotb_vivado"]
 
 [tool.ruff.lint.per-file-ignores]
-# Legacy run()-based tests. They keep their original bare subprocess
-# invocations and identity comparisons verbatim until they migrate to
-# the new runner.
-"tests/test_axil.py" = ["PLW1510", "F841"]
-"tests/test_fw.py" = ["PLW1510"]
+# Low-level XSI ctypes smoke test; keeps its original bare subprocess
+# calls and identity comparisons verbatim.
 "tests/test_xsi.py" = ["PLW1510", "E712"]
 
 [tool.mypy]
