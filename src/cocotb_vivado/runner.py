@@ -25,9 +25,13 @@ The contract for finding Vivado:
 
 from __future__ import annotations
 
+import functools
+import hashlib
+import json
 import logging
 import os
 import shutil
+import subprocess
 from collections.abc import Mapping, Sequence
 from os import environ
 from pathlib import Path
@@ -44,6 +48,11 @@ Timescale = tuple
 
 WaveFormat = Literal["wdb", "vcd", "fst"]
 
+SIGNATURE_SCHEMA_VERSION = 1
+SIGNATURE_FILENAME = "build_signature.json"
+
+cache_log = logging.getLogger("cocotb_vivado.runner.cache")
+
 _FILE_DUMP_WAVES = """\
 {timescale_declaration}
 module cocotb_vivado_dump();
@@ -53,6 +62,54 @@ module cocotb_vivado_dump();
   end
 endmodule
 """
+
+
+def _hash_file(path: Path) -> str:
+    """SHA-256 hex digest of file contents. Empty string if missing."""
+    if not path.exists() or not path.is_file():
+        return ""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+@functools.cache
+def get_xsim_tool_versions() -> dict[str, str]:
+    """Capture xelab/xvlog/xvhdl --version output, cached for the session."""
+    versions: dict[str, str] = {}
+    for tool in ("xelab", "xvlog", "xvhdl"):
+        try:
+            result = subprocess.run(
+                [tool, "--version"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            lines = result.stdout.strip().splitlines()
+            versions[tool] = lines[0] if lines else ""
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            versions[tool] = ""
+    return versions
+
+
+def _load_signature(sig_path: Path) -> dict | None:
+    """Read and parse a stored build_signature.json, or None if absent/corrupt."""
+    if not sig_path.exists():
+        return None
+    try:
+        return json.loads(sig_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _save_signature(sig_path: Path, sig: dict) -> None:
+    """Write a signature dict as JSON. Atomic via tmp-and-rename."""
+    tmp = sig_path.with_suffix(sig_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(sig, sort_keys=True, indent=2), encoding="utf-8")
+    tmp.replace(sig_path)
 
 
 class Vivado(Simulator):  # type: ignore[no-any-unimported]
@@ -69,6 +126,8 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
         self.snapshot_name: str = ""
         self.wave_paths: dict = {}
         self.vivado_sources: list[VivadoSource] = []
+        self._pending_signature: dict | None = None
+        self._force_prepare: bool = False
         self.log = logging.getLogger(__name__)
         super().__init__()
 
@@ -124,7 +183,18 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
         self.vivado_sources = [s for s in sources_in if isinstance(s, VivadoSource)]
         kwargs["sources"] = [s for s in sources_in if not isinstance(s, VivadoSource)]
 
+        self._pending_signature = None
+        self._force_prepare = False
+
         super().build(*args, **kwargs)
+
+        # Build succeeded (no exception). Persist the new signature on a
+        # cache miss. On a hit, _pending_signature stays None — the
+        # already-on-disk signature is still authoritative.
+        if self._pending_signature is not None:
+            _save_signature(
+                self.build_dir / SIGNATURE_FILENAME, self._pending_signature
+            )
 
     def test(
         self,
@@ -179,6 +249,19 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
             if self.wave_format in ("vcd", "fst"):
                 self._write_wavedump_file()
 
+        # Tier 1 cache probe: skip the whole pipeline when the input
+        # signature matches a prior successful build and its snapshot
+        # artifacts are still on disk.
+        current_signature = self._compute_signature()
+        if not self.always and self._cache_hit(current_signature):
+            cache_log.info("cache hit: skipping prepare + xvlog/xvhdl/xelab")
+            return []
+        self._pending_signature = current_signature
+        # Tier 1 missed (or always=True). Force each VivadoSource to
+        # re-run its Vivado batch even if its mtime check would have
+        # skipped — guards against content-change-without-mtime-change.
+        self._force_prepare = True
+
         cmds: list[Command] = []
 
         # Vivado-managed sources first: their .prepare() may run vivado batch
@@ -215,7 +298,9 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
         Side effects: extends ``self.xilinx_libraries`` and
         ``self.elab_modules`` from the returned :class:`SimDirInfo`.
         """
-        info = source.prepare(self.build_dir, self.hdl_library)
+        info = source.prepare(
+            self.build_dir, self.hdl_library, force=self._force_prepare
+        )
         self.xilinx_libraries.update(info.libraries)
         self.elab_modules.extend(info.glbl_modules)
         cmds: list[Command] = []
@@ -243,6 +328,57 @@ class Vivado(Simulator):  # type: ignore[no-any-unimported]
                 cmd.append(["vcd2fst", str(vcd_path), str(fst_path)])
 
         return cmd
+
+    # ------------------------------------------------------------------
+    # Tier 1 build cache
+    # ------------------------------------------------------------------
+
+    def _compute_signature(self) -> dict:
+        """Build the JSON-serializable signature for the current build."""
+        return {
+            "schema_version": SIGNATURE_SCHEMA_VERSION,
+            "tool_versions": get_xsim_tool_versions(),
+            "kwargs": {
+                "hdl_toplevel": self.hdl_toplevel,
+                "hdl_library": self.hdl_library,
+                "parameters": dict(sorted(self.parameters.items())),
+                "defines": dict(sorted(self.defines.items())),
+                "build_args": [str(a) for a in self.build_args],
+                "includes": [
+                    {"path": str(p), "sha256": _hash_file(Path(p))}
+                    for p in self.includes
+                ],
+                "timescale": list(self.timescale) if self.timescale else None,
+                "waves": bool(self.waves),
+                "wave_format": self.wave_format,
+                "extra_global_modules": list(self.extra_global_modules),
+            },
+            "user_sources": [
+                {"path": str(p), "sha256": _hash_file(Path(p))} for p in self.sources
+            ],
+            "vivado_sources": [s.fingerprint() for s in self.vivado_sources],
+        }
+
+    def _cache_hit(self, current: dict) -> bool:
+        """Return True iff a valid cache exists and all artifacts are present."""
+        sig_path = self.build_dir / SIGNATURE_FILENAME
+        stored = _load_signature(sig_path)
+        if stored is None:
+            cache_log.info("cache miss: signature absent or unreadable")
+            return False
+        if stored != current:
+            cache_log.info("cache miss: signature mismatch")
+            return False
+        snapshot = self.build_dir / "xsim.dir" / self.snapshot_name / "xsimk.so"
+        if not snapshot.exists():
+            cache_log.info("cache miss: snapshot artifact missing (%s)", snapshot)
+            return False
+        if self.waves and self.wave_format in ("vcd", "fst"):
+            dump_file = self.build_dir / "cocotb_vivado_dump.v"
+            if not dump_file.exists():
+                cache_log.info("cache miss: wavedump file missing")
+                return False
+        return True
 
     # ------------------------------------------------------------------
     # Helpers

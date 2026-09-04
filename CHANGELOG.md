@@ -15,6 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `runner.build()` / `runner.test()` interface. Pure XSim binary
   orchestration: only `xelab` / `xvlog` / `xvhdl` are invoked
   directly.
+- Content-hash build cache at `build_dir/build_signature.json`
+  (active by default; `always=True` bypasses it). The signature
+  captures user HDL source content hashes, every kwarg that affects
+  output (parameters, defines, build_args, includes, timescale,
+  waves, wave_format, extra_global_modules, hdl_toplevel,
+  hdl_library), each `VivadoSource.fingerprint()`, and
+  `xelab` / `xvlog` / `xvhdl --version`. On a hit, the entire
+  pipeline — including `VivadoSource.prepare()` — is skipped.
+  On a miss, `prepare()` is called with `force=True` so each
+  source bypasses its own mtime check (guards against
+  content-change-without-mtime-change, e.g. after `git checkout`).
+  Cache decisions are logged on the `cocotb_vivado.runner.cache`
+  logger.
 - `cocotb_vivado.vivado` — sub-package for Vivado-managed sources
   and the tool-driver helpers behind them. Architectural rule:
   anything that runs `vivado -mode batch` lives here, not in the

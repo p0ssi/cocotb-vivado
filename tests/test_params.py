@@ -30,7 +30,7 @@ async def cocotb_param_test(dut):
     )
 
 
-def _run(parameters):
+def _run(build_dir, parameters):
     proj_path = Path(__file__).resolve().parent
     sources = [proj_path / "tb_params.v"]
 
@@ -40,38 +40,41 @@ def _run(parameters):
     runner.build(
         sources=sources,
         hdl_toplevel="tb_params",
-        always=True,
+        always=False,
         timescale=("1ns", "1ps"),
         parameters=parameters,
+        build_dir=str(build_dir),
     )
     runner.test(
         hdl_toplevel="tb_params",
         test_module="test_params",
         hdl_toplevel_lang="verilog",
         testcase="cocotb_param_test",
+        build_dir=str(build_dir),
     )
 
 
-def test_params_default():
+def test_params_default(build_dir):
     os.environ["EXPECTED_WIDTH"] = "8"
     os.environ["EXPECTED_DEPTH"] = "4"
-    _run(parameters={})
+    _run(build_dir, parameters={})
 
 
-def test_params_override():
+def test_params_override(build_dir):
     os.environ["EXPECTED_WIDTH"] = "16"
     os.environ["EXPECTED_DEPTH"] = "7"
-    _run(parameters={"WIDTH": 16, "DEPTH": 7})
+    _run(build_dir, parameters={"WIDTH": 16, "DEPTH": 7})
 
 
-def test_params_unknown():
+def test_params_unknown(build_dir):
     os.environ["EXPECTED_WIDTH"] = "8"
     os.environ["EXPECTED_DEPTH"] = "4"
     with pytest.raises(SystemExit):
-        _run(parameters={"NOT_A_REAL_PARAM": 1234})
+        _run(build_dir, parameters={"NOT_A_REAL_PARAM": 1234})
 
 
 if __name__ == "__main__":
-    test_params_default()
-    test_params_override()
-    test_params_unknown()
+    _build_dir = Path(__file__).resolve().parent / "sim_build" / Path(__file__).stem
+    test_params_default(_build_dir)
+    test_params_override(_build_dir)
+    test_params_unknown(_build_dir)

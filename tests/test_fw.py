@@ -85,7 +85,7 @@ async def cocotb_fw_test(dut):
     dut.areset.value = 0
 
 
-def test_fw():
+def test_fw(build_dir):
     proj_path = Path(__file__).resolve().parent
     runner = get_runner(os.getenv("SIM", "vivado"))
     runner.build(
@@ -97,8 +97,9 @@ def test_fw():
         ],
         hdl_toplevel="fw_wrapper",
         hdl_library="xil_defaultlib",
-        always=True,
+        always=False,
         timescale=("1ns", "1ps"),
+        build_dir=str(build_dir),
     )
     runner.test(
         hdl_toplevel="fw_wrapper",
@@ -106,8 +107,10 @@ def test_fw():
         test_module="test_fw",
         hdl_toplevel_lang="verilog",
         testcase="cocotb_fw_test",
+        build_dir=str(build_dir),
     )
 
 
 if __name__ == "__main__":
-    test_fw()
+    _build_dir = Path(__file__).resolve().parent / "sim_build" / Path(__file__).stem
+    test_fw(_build_dir)

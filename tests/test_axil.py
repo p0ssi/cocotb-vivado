@@ -35,22 +35,25 @@ async def cocotb_axil_test(dut):
     assert data_in == data_out
 
 
-def test_axil():
+def test_axil(build_dir):
     proj_path = Path(__file__).resolve().parent
     runner = get_runner(os.getenv("SIM", "vivado"))
     runner.build(
         sources=[proj_path / "test_axil.v"],
         hdl_toplevel="test_axil",
-        always=True,
+        always=False,
         timescale=("1ns", "1ps"),
+        build_dir=str(build_dir),
     )
     runner.test(
         hdl_toplevel="test_axil",
         test_module="test_axil",
         hdl_toplevel_lang="verilog",
         testcase="cocotb_axil_test",
+        build_dir=str(build_dir),
     )
 
 
 if __name__ == "__main__":
-    test_axil()
+    _build_dir = Path(__file__).resolve().parent / "sim_build" / Path(__file__).stem
+    test_axil(_build_dir)

@@ -27,19 +27,22 @@ async def check_width(dut):
 def _run(width):
     os.environ["EXPECTED_WIDTH"] = str(width)
     here = Path(__file__).resolve().parent
+    build_dir = here / "sim_build"
     runner = get_runner(os.getenv("SIM", "vivado"))
     runner.build(
         sources=[here / "params_dut.v"],
         hdl_toplevel="params_dut",
-        always=True,
+        always=False,
         parameters={"WIDTH": width},
         timescale=("1ns", "1ps"),
+        build_dir=str(build_dir),
     )
     runner.test(
         hdl_toplevel="params_dut",
         test_module="test_parameters",
         hdl_toplevel_lang="verilog",
         testcase="check_width",
+        build_dir=str(build_dir),
     )
 
 

@@ -145,6 +145,25 @@ sources flow through `xvlog` / `xvhdl` directly. Pure-RTL builds
 without any `VivadoSource` instance never touch the `vivado` binary
 — `xelab` / `xvlog` / `xvhdl` are the only external programs invoked.
 
+## Build cache
+
+`runner.build(always=False)` consults a content-hash signature at
+`build_dir/build_signature.json`. A hit (every input byte-identical
+to a prior successful build, snapshot artifacts still on disk) skips
+the entire compile/elab pipeline including any `VivadoSource.prepare()`
+calls. Pass `always=True` to force a rebuild regardless. The cache is
+correct under `git checkout` content-vs-mtime divergence — the runner
+re-runs `VivadoSource.prepare(force=True)` on any miss, bypassing each
+source's own mtime check.
+
+Decisions are visible via the `cocotb_vivado.runner.cache` logger
+(INFO-level — one line per decision: `cache hit` or
+`cache miss: <reason>`). To see them in pytest:
+
+```
+pytest -o log_cli=true -o log_cli_level=INFO test_simple.py
+```
+
 ## Environment
 
 Before running tests:
