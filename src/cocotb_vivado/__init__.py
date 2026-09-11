@@ -1,16 +1,8 @@
 """cocotb-vivado package init.
 
-Importing this package has two global side effects:
-
-1. ``cocotb.simulator`` in ``sys.modules`` is replaced with the
-   in-process XSI stub. This is how the runner injects a GPI shim
-   that cocotb can talk to.
-2. ``cocotb.clock.Clock`` and the ``cocotb.triggers.{Edge, RisingEdge,
-   FallingEdge}`` classes are replaced with scheduler-driven polling
-   equivalents from :mod:`cocotb_vivado.clock_scheduler`. The stub
-   rejects ``register_value_change_callback``, so the real cocotb edge
-   triggers cannot work; the polling stand-ins fill that gap until the
-   stub layer learns proper value-change callbacks.
+Importing this package has one global side effect: ``cocotb.simulator``
+in ``sys.modules`` is replaced with the in-process XSI stub. This is
+how the runner injects a GPI shim that cocotb can talk to.
 
 Consequence — **import order matters**. Always import ``cocotb_vivado``
 (or any ``cocotb_vivado.*`` submodule) before ``cocotb``. Importing
@@ -28,22 +20,9 @@ silently becomes a no-op:
     import cocotb
     import cocotb_vivado
 
-For the trigger patches to win, reference the trigger classes via the
-module path inside your test:
-
-.. code-block:: python
-
-    @cocotb.test()
-    async def t(dut):
-        await cocotb.triggers.RisingEdge(dut.clk)  # uses the patched class
-
-``from cocotb.triggers import RisingEdge`` followed by ``RisingEdge(...)``
-binds the *original* class regardless of these patches, because Python
-resolves the name at import time.
-
-Both side effects are tracked for removal once the stub layer ships
-proper value-change callback support, at which point the trigger
-patches go away and cocotb's native edge triggers Just Work.
+With the GPI shim in place, cocotb's native ``Clock`` and
+``RisingEdge`` / ``FallingEdge`` / ``Edge`` triggers work directly
+against the in-process simulator.
 """
 
 import importlib
@@ -57,20 +36,8 @@ sys.modules["cocotb.simulator"] = importlib.import_module(
 )
 
 import cocotb  # noqa: E402
-import cocotb.clock  # noqa: E402
-import cocotb.triggers  # noqa: E402
 
-from . import clock_scheduler  # noqa: E402
-from .stub.mgr import Mgr  # noqa: E402
-
-# Patch cocotb's Clock and edge-trigger classes with scheduler-driven
-# stand-ins. The XSI stub does not support value-change callbacks, so
-# cocotb's native RisingEdge/FallingEdge/Edge cannot fire; the polling
-# implementations from clock_scheduler bridge the gap.
-cocotb.clock.Clock = clock_scheduler.ScheduledClock
-cocotb.triggers.RisingEdge = clock_scheduler.RisingEdge
-cocotb.triggers.FallingEdge = clock_scheduler.FallingEdge
-cocotb.triggers.Edge = clock_scheduler.Edge
+from .stub.manager import Mgr  # noqa: E402
 
 
 def run(module, xsim_design, top_level_lang):
