@@ -111,10 +111,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Requires cocotb 2.0.x.** cocotb 1.x is no longer supported (cocotb
-  2.1 support is in progress). The GPI shim now targets cocotb 2.x's
-  pygpi interface — integer type / edge tags come from
-  `cocotb_vivado._gpi_enums` and the runner subclasses
+- **Requires cocotb >= 2.1.** cocotb 1.x is no longer supported. The GPI
+  shim now targets cocotb 2.x's pygpi interface — integer type / edge
+  tags come from `cocotb_vivado._gpi_enums` and the runner subclasses
   `cocotb_tools.runner`.
 - **Edge triggers now observe same-timestep value deposits.** The
   value-change manager samples signals *after* cocotb applies its
