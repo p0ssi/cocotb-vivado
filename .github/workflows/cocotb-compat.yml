@@ -1,0 +1,75 @@
+name: cocotb-compat
+
+# Vets a cocotb release against the private GPI shim contract cocotb-vivado
+# relies on (see scripts/check_cocotb_compat.py). Needs no simulator, so it
+# runs on hosted CI — unlike the full test suite, which needs Vivado and runs
+# locally. This is Tier 1: it statically catches missing constants/functions,
+# arity drift, and load_entry signature changes. Tier 2 (runtime callback
+# convention, sim-time/precision, scheduler phases, teardown) is the local
+# dual-Vivado suite run against the new cocotb.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # weekly (Mon 06:00 UTC) — catches a new cocotb release
+  workflow_dispatch: {} # manual, e.g. when a release is announced
+  pull_request:
+    paths: # re-validate whenever the shim or the checker changes
+      - "src/cocotb_vivado/stub/**"
+      - "src/cocotb_vivado/_gpi_enums.py"
+      - "src/cocotb_vivado/__main__.py"
+      - "scripts/check_cocotb_compat.py"
+      - ".github/workflows/cocotb-compat.yml"
+
+permissions:
+  contents: read
+  issues: write # to open/update a tracking issue on scheduled drift
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Regression guard: our declared floor must stay compatible.
+          - { name: "pinned floor", flags: "", spec: "cocotb>=2.1,<2.2", soft: "false" }
+          # The catch: newest stable release. A scheduled failure here means a
+          # fresh cocotb broke the shim before a user hit it.
+          - { name: "latest", flags: "", spec: "cocotb", soft: "false" }
+          # Advance warning: pre-releases (rc/beta). Soft — a break is a heads-up,
+          # not a red gate.
+          - { name: "pre-release", flags: "--pre", spec: "cocotb", soft: "true" }
+    continue-on-error: ${{ matrix.soft == 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install cocotb (${{ matrix.name }})
+        run: pip install -U ${{ matrix.flags }} "${{ matrix.spec }}"
+      - name: Check GPI contract
+        run: python scripts/check_cocotb_compat.py
+      - name: Open/update drift issue
+        if: failure() && matrix.soft != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          title="cocotb GPI-contract drift"
+          {
+            echo "The scheduled \`cocotb-compat\` check failed — cocotb's private GPI"
+            echo "shim contract has drifted from what \`cocotb_vivado/stub/*\` provides."
+            echo "Update the stub + \`_gpi_enums.py\`, then re-run (details below)."
+            echo
+            echo '```'
+            python scripts/check_cocotb_compat.py 2>&1 || true
+            echo '```'
+          } > issue_body.md
+          num="$(gh issue list --state open --search "in:title \"$title\"" \
+                  --json number,title \
+                  --jq '[.[] | select(.title=="'"$title"'")] | (.[0].number // empty)')"
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body-file issue_body.md
+          else
+            gh issue create --title "$title" --body-file issue_body.md
+          fi
